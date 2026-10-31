@@ -184,14 +184,15 @@ or an `unavailable`-style refusal. Do not loop on `authenticate()`; cache the to
 ## Consuming a task
 
 If you *receive* documents, you are the consumer and SPEC 7.2 applies to you. `@openvtc/trust-tasks/runtime` implements
-the checks; `templates/inbox-verifier` is the worked example (`src/inbox.ts`, 109 lines, offline).
+the checks; `templates/inbox-verifier` is the worked example (`src/inbox.ts`, offline).
 
 ```sh
 npm run demo -w @buildathon/inbox-verifier
 ```
 
-`demo` starts the server and checks five cases: accepted once, replay not re-run, tampered payload `proofInvalid`,
-wrong recipient `wrongRecipient`, bad payload `malformedRequest` **[run]** (also run for the "note" walkthrough copy in
+`demo` starts the server and checks six cases: accepted once, replay not re-run, tampered payload `proofInvalid`,
+wrong recipient `wrongRecipient`, bad payload `malformedRequest`, a signed document of another type (a forged
+`#response`) `unsupportedType` **[run]** (the first five also run for the "note" walkthrough copy in
 [04](04-developing-tasks.md)).
 
 What `consumeInbound` does, in order **[src]** (package README):
@@ -199,7 +200,7 @@ What `consumeInbound` does, in order **[src]** (package README):
 | SPEC 7.2 item | Check | In `consumeInbound`? |
 |---|---|---|
 | 1 | Framework envelope schema | No: your parse |
-| 3 | Unknown `type` | No: **you dispatch on `doc.type` first** (below) |
+| 3 | Unknown `type` | No: **you dispatch on `doc.type` first** (below; the template's `typeRefusal()`) |
 | 2 | Payload against the spec schema | Yes, via your `payloadPolicy` validator |
 | 4, 13 | `expiresAt`, future `issuedAt`, max age | Yes (`checks`) |
 | 5, 8 | Wrong or missing `recipient`; proof without `recipient` | Yes |

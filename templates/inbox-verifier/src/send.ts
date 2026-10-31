@@ -4,11 +4,12 @@ import { signTrustTask } from "@openvtc/trust-tasks-proof";
 import { newIdentity, rfc3339, type Identity } from "@buildathon/vta-client";
 import { NOTE_TYPE } from "./inbox.js";
 
-export function makeNote(me: Identity, recipient: string, title: string, body: string) {
+/** A signed note. `type` is for tests and the demo (a document of another type that the inbox must refuse). */
+export function makeNote(me: Identity, recipient: string, title: string, body: string, type: string = NOTE_TYPE) {
   return signTrustTask(
     {
       id: crypto.randomUUID(),
-      type: NOTE_TYPE,
+      type,
       issuer: me.did,
       recipient,
       issuedAt: rfc3339(),

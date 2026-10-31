@@ -1,7 +1,8 @@
 // Self-contained end-to-end run: start the inbox, send a good note, replay it,
-// tamper with one, misaddress one. Exits non-zero if any verdict is wrong.
+// tamper with one, misaddress one, send a malformed one and one of another type. Exits non-zero if any verdict is wrong.
 import assert from "node:assert/strict";
 import { newIdentity } from "@buildathon/vta-client";
+import { NOTE_TYPE } from "./inbox.js";
 import { startServer } from "./server.js";
 import { makeNote, post } from "./send.js";
 
@@ -23,16 +24,25 @@ try {
   bad.payload.body = "tampered";
   const r3 = await post(s.url, bad);
   console.log("tampered  ->", r3.status, r3.body.payload?.code);
-  assert.equal(r3.status, 400);
+  assert.equal(r3.status, 422);
+  assert.equal(r3.body.payload?.code, "proofInvalid");
 
   const r4 = await post(s.url, makeNote(me, "did:web:someone.else", "x", "y"));
   console.log("wrong rcpt->", r4.status, r4.body.payload?.code);
-  assert.equal(r4.status, 400);
+  assert.equal(r4.status, 422);
+  assert.equal(r4.body.payload?.code, "wrongRecipient");
 
   const r5 = await post(s.url, makeNote(me, s.did, "", "y"));
   console.log("bad payload->", r5.status, r5.body.payload?.code);
   assert.equal(r5.status, 400);
-  console.log("OK: accepted once, replay not re-executed, tamper/misaddress/malformed rejected");
+  assert.equal(r5.body.payload?.code, "malformedRequest");
+
+  // A signed, fresh, correctly addressed document of another type (here: a forged "#response") is not a note.
+  const r6 = await post(s.url, makeNote(me, s.did, "x", "y", `${NOTE_TYPE}#response`));
+  console.log("wrong type->", r6.status, r6.body.payload?.code);
+  assert.equal(r6.status, 422);
+  assert.equal(r6.body.payload?.code, "unsupportedType");
+  console.log("OK: accepted once, replay not re-executed, tamper/misaddress/malformed/wrong type rejected");
 } finally {
   await s.close();
 }
