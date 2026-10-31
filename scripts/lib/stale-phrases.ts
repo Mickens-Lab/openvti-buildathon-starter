@@ -31,6 +31,7 @@ export const STALE_RULES: StaleRule[] = [
   { why: "the kit uses REST for VTA/VTC calls AND the TSP binding in tunnel mode (docs/trust-tasks/01-concepts.md#transports)", re: /REST over HTTP\*{0,2} only|leaves DIDComm and messaging off/i },
   { why: "the Trust Task document is not an envelope (SPEC 4); \"envelope\" is only a binding's wrapper such as TSP's {type, document}", re: /## The envelope|signed envelope|Trust Task envelopes?|response envelope|error envelope|Envelope \/ document/i },
   { why: "callWithRetry is now sendWithRetry: a retry re-sends the same signed document (SPEC 8.4); a new id is a reissue", re: /callWithRetry/ },
+  { why: "the member's credential is bound to the grant when the grant arrived in an issue frame (tunnel mode), unbound only otherwise; the dashboard keeps the grant from the frames (docs/MESSAGING.md#what-credentialsdelivered-means)", re: /nothing sends the member's own credential back|the frame's type is all this page reads|always (?:sent |stored )?unbound|Binding it would need the grant, which the kit could only get/i },
   { why: "the agenda commands are npm ci and npm run up, not docker load / npm i / vta:up", re: /`docker load`, `npm i`/ },
   { why: "prebuilt images are not available (pins.json images.available is false): say \"build locally; prebuilt images not yet available\"", re: PREBUILT_DEFAULT, only: "unavailable", unless: FUTURE_OR_ABSENT },
 ];

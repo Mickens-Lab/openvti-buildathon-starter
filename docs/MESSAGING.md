@@ -21,7 +21,10 @@ a TSP relationship, and send a signed `messaging/ping/0.1` in the TSP binding en
 **Verified live (`MODE=tunnel`, pinned images including mediator 0.45.0, 2026-10-30, two separate bring-ups):**
 - **The pong.** `npm run tsp:ping` (Node) and `npm run tsp:ping:browser` (the `templates/tsp-ping` page in headless Chromium) each end in `pong from the VTA ... status ok, protocols [tsp, didcomm, rest], nonce echoed`
   after the relationship invite was accepted **[verified]**. `npm run tunnel:probe` (and so `npm run up`) now includes the same ping as a row **[verified]**. The pong is the VTA's answer to a signed
-  `messaging/ping/0.1`, routed client -> mediator -> VTA and back, all TSP 1.0.
+  `messaging/ping/0.1`, routed client -> mediator -> VTA and back, all TSP 1.0. The client checks the pong by its `type`, its
+  `threadId` (the ping's `id`) and its in-band `issuer`/`recipient`: the VTA (0.65.0) sends both, `issuer` exactly the VTA's DID (no
+  fragment) and `recipient` exactly the pinger's DID, and signs the pong for `authentication` with the VTA's `#key-0` **[verified
+  2026-10-31, one machine, one run]**.
 - **Credential push to a `did:key`.** With `npm run tsp:listen` running as the app's `did:key` (`VTC_APPLICANT=did:key`; the tunnel default is the `did:peer:2` [below](#tunnel-mode-delivers-the-credential-to-the-applicant)), `npm run vtc:join` plus `npm run vtc:approve` made the VTC send two `credential-exchange/issue/0.1` frames to that
   DID through the mediator; the listener received and opened both, and the VTC logged `trust-task push delivered ... via=tsp` **[verified]**. The listener must have spoken TSP to the VTC first
   (it forms the relationship; the VTC learns the route from the inbound invite). Not checked: that a wallet could accept and store the credential, or what the frames contain beyond their type.
@@ -140,7 +143,11 @@ member's). So:
 It sends no `requestId`: the page cannot be sure which approved request is the current membership's, and a wrong one makes the VTC
 refuse the whole delivery. `VtcClient.sendMembershipCredential()` does the same from Node. The unbound send is **verified live
 2026-10-30 (one machine, one run)** for both identities (receipt `stored`, `credentialsDelivered=true`, the VTC logs `stored
-member-issued VMC` with the unbound-digest warning). The bound send: see [STATUS.md](STATUS.md) for whether it ran live.
+member-issued VMC` with the unbound-digest warning). The bound send is **verified live 2026-10-31 (tunnel mode, did:peer:2, one
+machine, one run)**: the card said the grant arrived, the community answered `stored`, the row turned to "bound credential held",
+the VTC logged `stored member-issued VMC` with no unverified-digest warning, and the admin's `vtc/members/credentials/0.1` read
+`memberVmcBound: true`. A frame left over from an earlier membership can arrive when the listener starts; the page keeps the latest
+grant, and the bound credential matched the grant issued at the new approval.
 
 ## The rest of the gap: no DIDComm client, no wallet-side delivery
 
