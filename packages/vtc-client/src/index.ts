@@ -13,7 +13,7 @@
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
 import {
   TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, purposeFor, refusalCode, replyCode, rfc3339, servedVersions,
-  siopIdToken, unwrapReply, type Identity, type Reply, type ReplyKind,
+  siopIdToken, unwrapReply, checkReplyProof, fetchDidDocument, type Identity, type Reply, type ReplyKind, type ReplyProof,
 } from "@buildathon/vta-client";
 
 export { TrustTaskError, TrustTaskPending, refusalCode } from "@buildathon/vta-client";
@@ -153,6 +153,8 @@ export interface CallEvent {
   kind?: ReplyKind;
   /** The reply named another exchange in `threadId` (reported, not refused: SPEC 4.9). */
   threadMismatch?: boolean;
+  /** The reply document's own proof, checked against the VTC's DID document. Reported, never refused. */
+  replyProof?: ReplyProof;
 }
 
 // --- the member's own membership credential (vtc/members/vmc/0.1) ------------------------------
@@ -232,6 +234,7 @@ export class VtcClient {
   token?: string;
   /** Optional observer, called once per call after it settles (success or failure). Must not throw; errors in it are swallowed. */
   onCall?: (e: CallEvent) => void;
+  private didDoc?: Promise<any>;
 
   constructor(
     public readonly baseUrl: string,
@@ -258,7 +261,7 @@ export class VtcClient {
   private report(e: CallEvent) {
     try { this.onCall?.(e); } catch { /* an observer must never break a call */ }
     const req = e.request as { id?: string; recipient?: string } | undefined;
-    emitTrace({ ts: e.startedAt, source: "vtc", transport: "rest", type: e.type, id: req?.id, from: e.issuer, to: req?.recipient ?? this.vtcDid, status: e.status, ok: e.ok, code: e.code, ms: e.durationMs });
+    emitTrace({ ts: e.startedAt, source: "vtc", transport: "rest", type: e.type, id: req?.id, from: e.issuer, to: req?.recipient ?? this.vtcDid, status: e.status, ok: e.ok, code: e.code, ms: e.durationMs, proof: e.replyProof });
   }
 
   /** Build and sign one Trust Task document addressed to this VTC, without sending it. Keep it to resend the same bytes. */
@@ -299,7 +302,13 @@ export class VtcClient {
     }
     const reply = classifyReply(doc as { id?: string; type: string; threadId?: string }, res.status, text);
     const ok = reply.kind === "response" || reply.kind === "no-response";
-    this.report({ ...base, durationMs: Date.now() - t0, status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}) });
+    let replyProof: ReplyProof | undefined;
+    if (reply.document) {
+      try {
+        replyProof = await checkReplyProof(reply.document, this.vtcDid, () => (this.didDoc ??= fetchDidDocument(this.baseUrl, this.fetchImpl).catch((e) => { this.didDoc = undefined; throw e; })));
+      } catch { replyProof = "unchecked"; }
+    }
+    this.report({ ...base, durationMs: Date.now() - t0, status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}), ...(replyProof ? { replyProof } : {}) });
     return reply;
   }
 

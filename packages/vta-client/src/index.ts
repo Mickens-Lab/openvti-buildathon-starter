@@ -5,5 +5,6 @@ export * from "./trace.js";
 export * from "./time.js";
 export * from "./reply.js";
 export * from "./purpose.js";
+export * from "./reply-proof.js";
 export * from "./cors.js";
 export * from "./fetch-hint.js";

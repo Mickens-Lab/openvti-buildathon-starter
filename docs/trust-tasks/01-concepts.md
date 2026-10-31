@@ -173,7 +173,8 @@ status **[src]** `packages/vta-client/src/reply.ts`:
 | anything else (another type, not JSON, a proxy's HTML) | throws `TrustTaskError` |
 
 A reply whose `threadId` names another exchange is reported (`threadMismatch` on the `onCall` event), not refused: 4.9
-forbids rejecting on `threadId` alone. `build()` + `send()` split the same call so you can keep a signed document and send
+forbids rejecting on `threadId` alone. The reply's own proof is checked and reported the same way (`replyProof`; see
+[06](06-troubleshooting-and-glossary.md#interop-gotchas)). `build()` + `send()` split the same call so you can keep a signed document and send
 it again. `VtcClient.call` is the same against `{baseUrl}/v1/trust-tasks`, with no bearer: the signed document is the
 authentication.
 Details and snippets: [03 Using tasks](03-using-tasks.md).

@@ -54,7 +54,10 @@ One line each; each one has cost someone a day.
 - **Refusals over DIDComm can arrive as a problem-report** rather than a `trust-task-error` on older agents; map both.
 - **A restarted VTA forgets the TSP relationship.** Invite again before the next request, or the request goes unanswered.
 - **Replies are not proof-checked by a REST client unless it says so.** Over plain HTTP anything on the path could forge
-  one. The kit's clients trust the transport for replies (fine on `localhost`; use HTTPS anywhere else).
+  one. The kit's VTA and VTC clients check every reply's proof against the agent's DID document (signer, key listed for
+  the proof's purpose, signature) and report `replyProof` (`verified`, `unsigned`, `wrongSigner`, `invalid`,
+  `unchecked`) on the `onCall` event; `TRACE=1` prints anything but `verified`. They do not refuse yet, so still use
+  HTTPS anywhere but `localhost`.
 
 ## Glossary
 

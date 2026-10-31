@@ -10,6 +10,7 @@ import {
 import { emitTrace } from "./trace.js";
 import { rfc3339 } from "./time.js";
 import { purposeFor } from "./purpose.js";
+import { checkReplyProof, fetchDidDocument, type ReplyProof } from "./reply-proof.js";
 import { TrustTaskError, classifyReply, isAlreadyExists, replyCode, unwrapReply, type Reply, type ReplyKind } from "./reply.js";
 
 export { TrustTaskError };
@@ -59,6 +60,8 @@ export interface CallEvent {
   kind?: ReplyKind;
   /** The reply named another exchange in `threadId` (reported, not refused: SPEC 4.9). */
   threadMismatch?: boolean;
+  /** The reply document's own proof, checked against the VTA's DID document. Reported, never refused (see reply-proof.ts). */
+  replyProof?: ReplyProof;
 }
 
 export interface Whoami {
@@ -115,6 +118,16 @@ export class VtaClient {
   /** Optional observer, called once per call after it settles (success or failure). Errors in it are swallowed. */
   onCall?: (e: CallEvent) => void;
 
+  private didDoc?: Promise<any>;
+  /** Check a reply's proof against the VTA's DID document (fetched once). Never throws; never fails the call. */
+  private async checkReplyProof(reply: unknown): Promise<ReplyProof> {
+    try {
+      return await checkReplyProof(reply, this.vtaDid, () => (this.didDoc ??= fetchDidDocument(this.baseUrl, this.fetchImpl).catch((e) => { this.didDoc = undefined; throw e; })));
+    } catch {
+      return "unchecked";
+    }
+  }
+
   /** Build and sign one Trust Task document addressed to this VTA, without sending it. Keep it to resend the same bytes. */
   build(type: string, payload: Record<string, unknown> = {}, opts: { threadId?: string } = {}): Record<string, unknown> {
     return signTrustTask(
@@ -145,7 +158,7 @@ export class VtaClient {
     const report = (e: Partial<CallEvent>) => {
       const ev = { ...done, durationMs: Date.now() - t0, ...e };
       try { this.onCall?.(ev); } catch { /* an observer must never break a call */ }
-      emitTrace({ ts: startedAt, source: "vta", transport: "rest", type, id: doc.id as string, from: this.me.did, to: this.vtaDid, status: ev.status, ok: ev.ok, code: ev.code, ms: ev.durationMs });
+      emitTrace({ ts: startedAt, source: "vta", transport: "rest", type, id: doc.id as string, from: this.me.did, to: this.vtaDid, status: ev.status, ok: ev.ok, code: ev.code, ms: ev.durationMs, proof: ev.replyProof });
     };
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.bearer !== false && this.token) headers.authorization = `Bearer ${this.token}`;
@@ -160,7 +173,8 @@ export class VtaClient {
     }
     const reply = classifyReply(doc as { id?: string; type: string; threadId?: string }, res.status, text);
     const ok = reply.kind === "response" || reply.kind === "no-response";
-    report({ status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}) });
+    const replyProof = reply.document ? await this.checkReplyProof(reply.document) : undefined;
+    report({ status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}), ...(replyProof ? { replyProof } : {}) });
     return reply;
   }
 

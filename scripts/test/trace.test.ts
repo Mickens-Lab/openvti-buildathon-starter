@@ -22,6 +22,8 @@ test("a line shows time, client, task, outcome, duration and who to whom", () =>
 
 test("a refusal and a network error are marked", () => {
   assert.match(formatTrace(ev({ ok: false, status: 403, code: "permissionDenied" })), /REFUSED 403 permissionDenied/);
+  assert.match(formatTrace(ev({ proof: "invalid" })), /reply proof invalid/);
+  assert.doesNotMatch(formatTrace(ev({ proof: "verified" })), /reply proof/);
   assert.match(formatTrace(ev({ ok: false, status: undefined, code: "network", source: "tsp", transport: "tsp" })), /tsp tsp .*REFUSED network/);
 });
 

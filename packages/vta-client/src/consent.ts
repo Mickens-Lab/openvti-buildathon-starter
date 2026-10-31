@@ -12,6 +12,9 @@ import { resolveDIDFromLog } from "didwebvh-ts";
 import { canonicalBytes, fromMultibase, signTrustTask } from "@openvtc/trust-tasks-proof";
 import { TrustTaskError } from "./client.js";
 import { rfc3339 } from "./time.js";
+import { authenticationKey } from "./did-keys.js";
+
+export { keyFromDidDocument, authenticationKey, keyForPurpose } from "./did-keys.js";
 import { classifyReply, type Reply } from "./reply.js";
 import type { Identity } from "./identity.js";
 
@@ -71,34 +74,6 @@ export function consentRequiredOf(body: unknown): ConsentRequired | undefined {
     requests: extractRequests(d),
     matchCode: matchCode(d.payloadDigest),
   };
-}
-
-const ED25519_PUB = Uint8Array.from([0xed, 0x01]);
-
-/** The Ed25519 key of a verification method in a did:webvh document (`publicKeyMultibase`), or undefined. */
-export function keyFromDidDocument(doc: any, vmId: string): Uint8Array | undefined {
-  const vm = (doc?.verificationMethod ?? []).find((m: any) => m.id === vmId || (vmId.startsWith("#") && m.id?.endsWith(vmId)));
-  const mb: unknown = vm?.publicKeyMultibase;
-  if (typeof mb !== "string" || !mb.startsWith("z")) return undefined;
-  const raw = base58.decode(mb.slice(1));
-  return raw[0] === ED25519_PUB[0] && raw[1] === ED25519_PUB[1] && raw.length === 34 ? raw.slice(2) : undefined;
-}
-
-/**
- * The Ed25519 key of `vmId` only if the DID document lists it under `authentication` (by reference, relative `#id`, or
- * embedded) and the method's `controller` is `controller` (SPEC 4.7.3 items 2-3: the purpose the proof names, and a key
- * the issuer controls). Undefined otherwise.
- */
-export function authenticationKey(doc: any, vmId: string, controller: string): Uint8Array | undefined {
-  const did = doc?.id;
-  const abs = (id: unknown) => (typeof id === "string" && id.startsWith("#") && typeof did === "string" ? did + id : id);
-  const want = abs(vmId);
-  const listed = (doc?.authentication ?? []).map((a: any) => (typeof a === "string" ? { id: abs(a) } : { ...a, id: abs(a?.id) }));
-  const ref = listed.find((a: any) => a.id === want);
-  if (!ref) return undefined;
-  const vm = ref.type || ref.publicKeyMultibase ? ref : (doc?.verificationMethod ?? []).map((m: any) => ({ ...m, id: abs(m.id) })).find((m: any) => m.id === want);
-  if (!vm || vm.controller !== controller) return undefined;
-  return keyFromDidDocument({ verificationMethod: [vm] }, vm.id);
 }
 
 const ed25519Verifier = { verify: async (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => ed25519.verify(sig, msg, key) };
