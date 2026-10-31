@@ -66,7 +66,7 @@ export interface StoredNote extends NoteReceipt {
 
 export type Verdict =
   | { kind: "accepted"; response: unknown }
-  | { kind: "duplicate"; response?: unknown }
+  | { kind: "duplicate"; response?: unknown; inFlight?: boolean }
   | { kind: "rejected"; code: string; message: string; error: unknown }
   | { kind: "suppressed"; reason: string };
 
@@ -124,7 +124,7 @@ export function createInbox(myDid: string) {
         return { kind: "rejected", code: String(p.code ?? "unknown"), message: String(p.message ?? ""), error: outcome.error };
       }
       case "duplicate":
-        return { kind: "duplicate", response: outcome.priorResponse };
+        return { kind: "duplicate", response: outcome.priorResponse, inFlight: outcome.inFlight };
       case "suppressed":
         return { kind: "suppressed", reason: String(outcome.reason) };
       default:

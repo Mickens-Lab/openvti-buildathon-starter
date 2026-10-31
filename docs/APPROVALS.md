@@ -51,7 +51,8 @@ last 15 minutes and an approval 10 **[docs]**.
   generated `config.toml` and refuses to start if enforcement did not switch on.
 - **Over REST an approver needs a session**, and a DID with no ACL entry cannot open one (401, then "authentication failed") **[verified]**. The
   docs say an approver needs no ACL entry; that holds for the messaging transports **[docs]**. The demo therefore grants the approver a `monitor` entry
-  with no contexts. In `MODE=tunnel` the VTA also pushes the request to the approver over messaging, which this kit cannot receive ([MESSAGING.md](MESSAGING.md)).
+  with no contexts. Over messaging the sealed sender is the caller and the decision's `issuer` must equal it; there is no session
+  ([REST bearer vs messaging sender](trust-tasks/01-concepts.md#who-is-the-caller-rest-bearer-vs-messaging-sender)). In `MODE=tunnel` the VTA also pushes the request to the approver over messaging, which this kit cannot receive ([MESSAGING.md](MESSAGING.md)).
 - **No effects are shown.** The VTA's request carried an empty `effects` list for this task **[verified]**, so the approver says "NOT DETERMINED", never "no effects".
 - **There is no "is it approved yet?" call.** The requester asks again by submitting again; while pending the VTA repeats the same challenge **[verified]**.
 - `npm run reset` deletes `.vta/` including the approver key; run `approvals:setup` again afterwards.

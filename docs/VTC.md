@@ -215,8 +215,8 @@ Bugs found and fixed by the second pass:
   failed `DID not in ACL`. Both now pass `--profile vtc`.
 - `vtc:approve` stopped at the first request it could not approve (a member that re-applies gets a second open
   request, which `decide` refuses with a duplicate-membership conflict); it now reports it and continues. Refusals print
-  `code - message` instead of the whole signed envelope.
-- The dashboard showed the raw error envelope before a first join, and the membership button dumped JSON; it now
+  `code - message` instead of the whole signed document.
+- The dashboard showed the raw error document before a first join, and the membership button dumped JSON; it now
   explains, and says "Member: yes (approved)".
 
 Not verified:

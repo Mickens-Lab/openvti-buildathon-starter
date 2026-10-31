@@ -138,6 +138,18 @@ The TSP client above is the only messaging client in the kit. Nothing in the pin
 What the kit shows for credentials: the community dashboard's membership card says, per mode, why delivery to the app is not confirmed instead of showing a bare `false`, and the admin's
 approval response (`npm run vtc:approve`) is where a CLI-driven flow sees the credential; `npm run tsp:listen` shows the push frames arrive.
 
+## Notes for anyone extending the TSP client
+
+- **Ping version.** The kit sends `messaging/ping/0.1`, the version the pinned VTA was checked against; `0.2` exists in
+  the registry and in `@openvtc/trust-tasks` 0.28.1 but was not tried against the pinned VTA.
+- **A restarted VTA forgets the relationship.** The client invites once per session; after a VTA restart, open a new
+  session (invite again) or requests go unanswered.
+- **Replies are checked by `type`.** A `trust-task-error` reply surfaces its code; an in-band `issuer`/`recipient` that
+  differs from the TSP peer/own VID is refused (`checkPingReply`).
+- **DIDComm clients** (not in this kit) carry the same document as the body of a
+  `https://trusttasks.org/binding/didcomm/0.1/envelope` message; the authenticated sender must equal the document's
+  `issuer`. See [the transport table](trust-tasks/01-concepts.md#who-is-the-caller-rest-bearer-vs-messaging-sender).
+
 ## Building it yourself
 
 Pick an established DIDComm v2 / TSP library for your language, give your applicant a DID that references the mediator in `.vta/tunnel.json`'s DID, and watch the mediator's

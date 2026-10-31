@@ -175,13 +175,14 @@ export async function tspPing(opts: PingOptions): Promise<PingResult> {
     log("TSP relationship invite (waiting for the accept)");
     await c.session.relate(4000).catch((e) => log(`no accept seen, continuing: ${(e as Error).message}`));
     const nonce = crypto.randomUUID();
-    const envelope = buildTrustTask(PING_TYPE, { nonce }, { issuer: c.did, recipient: opts.vtaDid, issuedAt: rfc3339() });
-    id = envelope.id;
+    // The Trust Task document; the session wraps it in the TSP binding's {type, document} envelope.
+    const doc = buildTrustTask(PING_TYPE, { nonce }, { issuer: c.did, recipient: opts.vtaDid, issuedAt: rfc3339() });
+    id = doc.id;
     // The ping spec lets the proof be omitted over TSP; the VTA requires one by local policy (`proofRequired`).
-    await signOutboundTask(envelope, documentSigner(c.signing));
+    await signOutboundTask(doc, documentSigner(c.signing));
     log("sending messaging/ping/0.1 over TSP");
-    const reply = await c.session.request(envelope, timeoutMs, (d) => d.threadId === envelope.id);
-    checkPingReply(envelope, reply, c.did, opts.vtaDid);
+    const reply = await c.session.request(doc, timeoutMs, (d) => d.threadId === doc.id);
+    checkPingReply(doc, reply, c.did, opts.vtaDid);
     const pong = reply.payload as PongPayload;
     if (!isPong(pong, nonce)) throw new Error(`the reply was not a pong for this ping: ${JSON.stringify(pong)}`);
     return { clientDid: c.did, nonce, pong, elapsedMs: Date.now() - t0 };

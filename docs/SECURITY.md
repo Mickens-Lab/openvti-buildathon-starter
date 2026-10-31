@@ -54,7 +54,7 @@ ask it to sign, so protect the page against injected code (strict CSP, no third-
 hold the signing key itself, call its signing tasks instead of holding the key in your app (the app's `whoami` lists capabilities such as `sign`, `sign-document` and
 `sign-trust-task`; what each does and how it is scoped is **unverified**). Delete the ACL entry when the app is retired.
 
-*Evidence (design review):* `vault/sign-trust-task` has the VTA sign an envelope as a vault entry's principal DID, so the key stays in the VTA **[V]**. See [ROLES.md](ROLES.md) for contexts and expiry.
+*Evidence (design review):* `vault/sign-trust-task` has the VTA sign a document as a vault entry's principal DID, so the key stays in the VTA **[V]**. See [ROLES.md](ROLES.md) for contexts and expiry.
 
 **L4. A human in the loop.** Passkeys authenticate a human to a service; they are **not** usable to sign Trust Task documents (those need an Ed25519 DID key). Use a
 wallet or browser extension that asks the person to consent before each signature. The VTA serves approval and step-up tasks (`auth/step-up/*` appear in its discovery list)

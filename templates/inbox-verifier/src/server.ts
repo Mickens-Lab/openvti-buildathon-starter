@@ -54,7 +54,7 @@ export function startServer(p = port) {
         const v = await inbox.receive(doc);
         console.log(`${doc?.issuer ?? "?"} ${doc?.id ?? "?"} -> ${v.kind}${"code" in v ? ` (${v.code})` : ""}`);
         if (v.kind === "accepted") return send(200, v.response);
-        if (v.kind === "duplicate") return v.response ? send(200, v.response) : send(204);
+        if (v.kind === "duplicate") return v.response ? send(200, v.response) : send(v.inFlight ? 202 : 204);
         if (v.kind === "rejected") return send(statusForCode(v.code), v.error);
         // suppressed (SPEC 8.1): no error document may go back. An empty 400 says only "not taken"; the reason is logged above.
         return send(400);

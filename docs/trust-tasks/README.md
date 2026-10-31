@@ -13,7 +13,7 @@ HTTP is a Trust Task, so these pages are the background for every track.
 
 | Read | When |
 |---|---|
-| [01 Concepts](01-concepts.md) | First. The envelope, requests and responses, versions, proofs, side effects. 10 minutes. |
+| [01 Concepts](01-concepts.md) | First. The document, requests and responses, versions, proofs, side effects. 10 minutes. |
 | [02 Finding tasks](02-finding-tasks.md) | You need a task for a job: search, read a spec, decide use / extend / propose. |
 | [03 Using tasks](03-using-tasks.md) | You are calling a VTA or VTC, or receiving signed documents. Copy-paste TypeScript. |
 | [04 Developing tasks](04-developing-tasks.md) | You need a task that does not exist. Authoring, plus a hands-on "note" task wired into a handler and test. |

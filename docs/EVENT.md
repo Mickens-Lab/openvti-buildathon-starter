@@ -8,7 +8,7 @@ A four-hour buildathon for teams of 1 to 4 building a TypeScript app linked to a
 
 | Time | What |
 |---|---|
-| 0:00 | Welcome, the Trust Task idea in 10 minutes: envelope, proof, verifier |
+| 0:00 | Welcome, the Trust Task idea in 10 minutes: document, proof, verifier |
 | 0:15 | Setup: `npm ci`, `npm run up` (or `WITH_VTC=1 npm run up`), `npm run hello` (with the images already built or loaded) |
 | **0:40** | **Setup gate.** Every team shows the four-line `hello` output. Stragglers may use `MODE=farm` only if the Farm canary passed ([FARM.md](FARM.md)); otherwise a mentor fixes their local setup |
 | 0:40 | Build. Pick a track from [TRACKS.md](TRACKS.md); start from a template |
@@ -22,7 +22,7 @@ A four-hour buildathon for teams of 1 to 4 building a TypeScript app linked to a
 
 - 1 lead organiser (runs the clock, owns the gate).
 - 1 infra mentor per ~15 participants: Docker, image loading, ports, VTA logs.
-- 1 protocol mentor per ~15 participants: Trust Task envelopes, proofs, `consumeInbound`.
+- 1 protocol mentor per ~15 participants: Trust Task documents, proofs, `consumeInbound`.
 - 2 to 3 judges. Give each the rubric below and one hour of demos.
 
 ## Judging rubric (100 points)

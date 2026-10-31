@@ -42,7 +42,7 @@ export interface ConsentRequired {
 }
 
 /** Pick the request documents out of what an approver was handed: a request, an array, `{consentRequests}`, `{details}`, or a
- *  whole error envelope (`{payload:{details}}`). */
+ *  whole error document (`{payload:{details}}`). */
 export function extractRequests(input: unknown): unknown[] {
   const isReq = (v: any) => v && typeof v === "object" && v.type === CONSENT_REQUEST;
   if (Array.isArray(input)) return input.filter(isReq);

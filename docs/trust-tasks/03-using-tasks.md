@@ -87,7 +87,7 @@ An error document looks like this (from SPEC 8.2, shape verified against the VTA
 ```
 
 ```ts
-import { TrustTaskError, type VtaClient } from "@buildathon/vta-client";
+import { TrustTaskError, unwrapReply, type VtaClient } from "@buildathon/vta-client";
 
 /** What a refusal looks like once the client has thrown it. */
 export interface Refusal {
@@ -114,11 +114,15 @@ export function refusalOf(e: unknown): Refusal | undefined {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Retry only what the refusal says is retryable (SPEC 8.4); the client mints a fresh id each time. */
-export async function callWithRetry<R>(fn: () => Promise<R>, attempts = 3): Promise<R> {
+/**
+ * A retry in the SPEC 8.4 sense: re-send the SAME signed document (same id, same proof) while the refusal says it is
+ * retryable. Safe for a consequential write: the consumer absorbs a duplicate (7.2 item 11), and its answer to one
+ * (the kept response, or an empty 202/204) is not an error.
+ */
+export async function sendWithRetry<R>(vta: VtaClient, doc: Record<string, unknown>, attempts = 3): Promise<R> {
   for (let i = 1; ; i++) {
     try {
-      return await fn();
+      return unwrapReply<R>(await vta.send(doc)); // vta.build(type, payload) made `doc`; keep it
     } catch (e) {
       const r = refusalOf(e);
       if (!r?.retryable || i >= attempts) throw e;
@@ -159,12 +163,14 @@ How to react (SPEC 8.3, 8.4):
 | `<slug>:<local>` | Task-specific, `details` has the shape | Read the spec's `errorCodes` |
 
 "Retry" means re-sending the *same bytes* (same `id`, same proof). For a consequential task that is safe, because the
-consumer must absorb the duplicate (7.2 item 11). `callWithRetry` above calls `vta.call` again, which mints a **new**
-`id`; that is right for `unavailable` on a read, but for a consequential write prefer re-sending the exact signed
-document you built by hand.
+consumer must absorb the duplicate (7.2 item 11). Use `sendWithRetry(vta, vta.build(type, payload))` for that. Calling
+`vta.call` again is **not** a retry: it mints a new `id`, so a write that did run the first time (you just never saw the
+answer) runs again. That "reissue" is fine for a read; for a write, re-send the same document or check the state first,
+and never reissue a write blindly after a timeout.
 
-HTTP status is secondary: the starter saw 400 and 422 for refusals and 401/403 for sessions and roles; decide on
-`payload.code`, not the status **[src]** (`docs/FARM.md`, `README.md`).
+HTTP status is secondary: the starter saw 400 and 422 for refusals and 401/403 for sessions and roles; decide on the
+reply's `type` and then `payload.code`, not the status **[src]** (`docs/FARM.md`, `README.md`). Match `code` exactly;
+never pattern-match `message`, which is free text (SPEC 8.2.1).
 
 ### Version tolerance
 
@@ -199,7 +205,7 @@ What `consumeInbound` does, in order **[src]** (package README):
 
 | SPEC 7.2 item | Check | In `consumeInbound`? |
 |---|---|---|
-| 1 | Framework envelope schema | No: your parse |
+| 1 | Framework document schema | No: your parse |
 | 3 | Unknown `type` | No: **you dispatch on `doc.type` first** (below; the template's `typeRefusal()`) |
 | 2 | Payload against the spec schema | Yes, via your `payloadPolicy` validator |
 | 4, 13 | `expiresAt`, future `issuedAt`, max age | Yes (`checks`) |
@@ -213,38 +219,53 @@ What `consumeInbound` does, in order **[src]** (package README):
 ```ts
 import { createServer } from "node:http";
 import {
-  InMemoryReplayGuard, UnauthenticatedTransport, consequentialChecks, consumeInbound, respondWith,
+  InMemoryReplayGuard, UnauthenticatedTransport, consequentialChecks, consumeInbound, refuse, respondWith,
   type SpecPolicy, type TrustTaskDocument,
 } from "@openvtc/trust-tasks/runtime";
 import { DataIntegrityProofVerifier } from "@openvtc/trust-tasks-proof";
 
 const MY_DID = "<your-did>";
 const TYPE = "https://example.org/spec/buildathon/note/0.1";
-const spec: SpecPolicy = { typeUri: TYPE, isBearer: false, isProofRequired: true, isRecipientRequired: true, isIssuedAtRequired: true, payloadSchema: {} };
+const schema = { type: "object", required: ["title"], properties: { title: { type: "string", minLength: 1 } } };
+const spec: SpecPolicy = { typeUri: TYPE, isBearer: false, isProofRequired: true, isRecipientRequired: true, isIssuedAtRequired: true, payloadSchema: schema };
 const guard = new InMemoryReplayGuard();
+// 7.2 item 2: validate the payload. Hand-rolled here; with ajv: ({ ok: ajv.validate(s, p), errors: [...] }).
+const validator = { validate: (_s: unknown, p: any) => ({ ok: typeof p?.title === "string" && p.title !== "", errors: ["title: required string"] }) };
+const reply = (res: any, status: number, body?: unknown) =>
+  body === undefined ? res.writeHead(status).end() : res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body));
 
 createServer(async (req, res) => {
   let raw = ""; for await (const c of req) raw += c;
   const doc = JSON.parse(raw) as TrustTaskDocument<{ title: string }>;
-  // Item 3: dispatch on the type YOU implement before anything else. Compare as a whole string; keep any #fragment.
-  if (doc.type !== TYPE) { res.writeHead(400).end(); return; }
+  // Item 3: dispatch first. A request is the bare URI OR its #request form (4.4.1 rule 1: accept both). Never strip or
+  // ignore a #response fragment: a signed #response or a trust-task-error sent to you is not a request.
+  if (doc.type !== TYPE && doc.type !== `${TYPE}#request`) {
+    const why = { code: "unsupportedType" as const, message: `this endpoint serves ${TYPE}`, retryable: false };
+    return reply(res, 422, refuse(doc, crypto.randomUUID(), why));
+  }
   const out = await consumeInbound({
     transport: new UnauthenticatedTransport(),
     spec,
     proofPolicy: { kind: "verify", verify: new DataIntegrityProofVerifier() },
-    payloadPolicy: { kind: "acceptUnvalidated" },
+    payloadPolicy: { kind: "validate", validate: validator },
     checks: consequentialChecks(guard),
     doc, myVid: MY_DID, now: Date.now(), newErrorId: () => crypto.randomUUID(),
     handler: (accepted) => respondWith(accepted, crypto.randomUUID(), { ok: true }),
   });
-  res.end(JSON.stringify(out.kind));
+  // Answer with the document, never with the outcome's name.
+  if (out.kind === "handled") return reply(res, 200, out.response);
+  if (out.kind === "rejected") return reply(res, (out.error as any).payload.code === "malformedRequest" ? 400 : 422, out.error);
+  if (out.kind === "duplicate") return out.priorResponse ? reply(res, 200, out.priorResponse) : reply(res, out.inFlight ? 202 : 204);
+  return reply(res, out.kind === "accepted" ? 204 : 400); // accepted: fire-and-forget; suppressed: say nothing (8.1)
 });
 ```
 
 Decisions that are yours:
 
-- **Dispatch.** Compare `doc.type` with the whole string you implement, fragment included, before `consumeInbound`.
-  Reject the rest `unsupportedType`; a known slug with another MAJOR is `unsupportedVersion`.
+- **Dispatch.** Accept the bare Type URI you implement or its `#request` form, before `consumeInbound` (which does not
+  compare `type` itself). Reject the rest with an error document: `unsupportedType`, or `unsupportedVersion` for a known
+  slug at another version. Keep fragments when you key or route on `type` (4.4.1 rule 5). The inbox-verifier's
+  `typeRefusal()` and vta-client's `isRequestOf()` do this.
 - **Transport.** `UnauthenticatedTransport` means identity is the proof's `did:key`. Behind a gateway that authenticated
   the caller use `StaticTransport({ issuer })` so a mismatch is `identityMismatch` (7.2 item 6).
 - **Proof policy.** `verify` (honour proofs), `rejectIfPresent`, or `acceptUnverified` (only if the transport gives the same

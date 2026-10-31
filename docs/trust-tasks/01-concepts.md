@@ -7,17 +7,20 @@ The VTA and VTC in this starter expose their whole API this way: `POST /trust-ta
 
 Marks: **[run]** executed, **[src]** read from source, **[untested]**, **[draft]**. See the [legend](README.md#legend-how-each-claim-was-checked).
 
-## The envelope
+## The document
+
+A Trust Task is one JSON object, the *Trust Task document*. The framework defines no separate envelope around it
+(SPEC 4); "envelope" in this kit means only a transport binding's wrapper, such as the TSP binding's `{type, document}`.
 
 ```json
 {
   "id": "4f3c9e2a-1b81-4d3e-9b51-7a3c89e3d1f2",
-  "type": "https://trusttasks.org/spec/acl/grant/0.2",
+  "type": "https://trusttasks.org/spec/acl/grant/0.1",
   "threadId": "2d7f0b6e-5c3a-4e8b-8f1d-6a9e4c2b7d15",
   "issuer": "<sender-did>",
   "recipient": "<your-vta-did>",
-  "issuedAt": "2026-10-28T12:00:00.000Z",
-  "expiresAt": "2026-10-28T12:05:00.000Z",
+  "issuedAt": "2026-10-28T12:00:00Z",
+  "expiresAt": "2026-10-28T12:05:00Z",
   "payload": { "...": "task-specific, defined by the spec" },
   "proof": { "type": "DataIntegrityProof", "cryptosuite": "eddsa-jcs-2022", "...": "..." }
 }
@@ -117,11 +120,41 @@ whose `issuer` is not the signer's own `did:key`; keys travel inside the `did:ke
 
 ## Transports
 
-A transport binding says how documents travel and how identity, integrity and freshness map onto the envelope (9).
-This starter uses **REST over HTTP** only: signed documents POSTed as JSON. DIDComm, TSP and push bindings exist upstream
-(`bindings/` in the spec repo) but this starter leaves DIDComm and messaging off **[src]** `docs/VTC-SURFACE.md`.
-When the transport already authenticates the sender (mutually authenticated TLS, a bearer session), the in-band
-`issuer` must agree with it, otherwise `identityMismatch` (7.2 item 6).
+A transport binding says how documents travel and how identity, integrity and freshness map onto the document (9).
+This starter uses two:
+
+- **REST over HTTP** for every VTA and VTC call: the signed document is POSTed as JSON to `/trust-tasks` (VTA) or
+  `/v1/trust-tasks` (VTC). It follows the shape of the HTTPS binding (`bindings/https/0.3`) without claiming it: plain
+  `http://localhost` in local mode, and replies are not checked end to end beyond what [06 interop
+  gotchas](06-troubleshooting-and-glossary.md#interop-gotchas) lists.
+- **TSP** (the TSP binding, `bindings/tsp/0.1`) through the mediator in tunnel mode: `npm run tsp:ping`, `tsp:listen`
+  and the dashboard's credential frames **[src]** `packages/tsp-client`. DIDComm and push bindings exist upstream but
+  the kit has no client for them.
+
+When the transport already authenticates the sender (mutually authenticated TLS, a bearer session, a TSP sender), the
+in-band `issuer` must agree with it, otherwise `identityMismatch` (7.2 item 6).
+
+### TSP in one paragraph
+
+TSP carries bytes sealed from one VID (here a DID) to another; the mediator routes them without reading them. The binding
+puts one Trust Task document in an **envelope** `{ "type": "https://trusttasks.org/binding/tsp/0.1/envelope",
+"document": { ... } }` (the only thing this kit calls an envelope), and a consumer refuses a payload whose envelope `type`
+is anything else. The authenticated TSP sender VID is the transport identity: the document's `issuer`, when present, must
+equal it as an exact string. The kit seals the document to the final recipient and routes it via the mediator (nested
+mode), where the binding lets a task spec make `proof` optional; the VTA still requires one by its own policy. Replay
+protection is still keyed on the document `id`, and a reply is matched by `threadId` equal to the request `id`.
+
+### Who is the caller: REST bearer vs messaging sender
+
+The two transports authenticate the caller differently, and code written for one does not port to the other unchanged:
+
+| | REST (this kit's VTA/VTC calls) | Messaging (TSP here; DIDComm in other clients, e.g. mobile wallets) |
+|---|---|---|
+| VTA session | `auth/challenge` then `auth/authenticate`, then a bearer on every call **plus** the signed document | none: the sealed sender is the caller; no challenge, no bearer |
+| VTC | the signed document alone, no bearer | the same document, sealed from the member's DID |
+| Who decides | the bearer's DID and the signer's ACL entry | the sender's ACL entry; `issuer` must equal the sender (exact string) |
+| Consent approver | needs a `monitor` ACL entry just to get a REST session | needs no entry |
+| Retrying a write | re-send the same document (see [03](03-using-tasks.md#handling-refusals)) | the same; and a restarted VTA forgets the TSP relationship, so invite again |
 
 ## How the starter sends one
 
@@ -149,9 +182,10 @@ Details and snippets: [03 Using tasks](03-using-tasks.md).
 
 A Type URI at `https://trusttasks.org/` is reserved for the public registry. For your own tasks use another authority
 you control, e.g. `https://example.org/spec/<slug>/<MAJOR.MINOR>`, a DID URL or a URN (6.5). Everything else in the
-framework (envelope, versions, errors, consumer checks) applies unchanged. The inbox-verifier template does this with
+framework (document shape, versions, errors, consumer checks) applies unchanged. The inbox-verifier template does this with
 `https://example.org/spec/buildathon/note/0.1` **[src]**. Slugs must match
-`^[a-z][a-z0-9]*(-[a-z0-9]+)*(/[a-z][a-z0-9]*(-[a-z0-9]+)*)*$` and must not start with `trust-task` or `trust-ceremony`.
+`^[a-z][a-z0-9]*(-[a-z0-9]+)*(/[a-z][a-z0-9]*(-[a-z0-9]+)*)*$` and must not match `^trust-(task|ceremony)($|-|/)`: `trust-task`, `trust-ceremony` and anything starting `trust-task-`,
+`trust-task/`, `trust-ceremony-` or `trust-ceremony/` is reserved, while `trust-tasks-x` is allowed (6.1).
 
 ## Ceremonies (one paragraph)
 

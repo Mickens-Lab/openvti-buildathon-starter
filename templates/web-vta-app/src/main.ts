@@ -90,14 +90,14 @@ function detectWallet() {
   $("wallet-sign").onclick = guard(async () => {
     const issuedAt = rfc3339();
     // The wallet's holder DID signs; set recipient before signing (audience binding).
-    const envelope = {
+    const doc = {
       id: crypto.randomUUID(),
       type: "https://example.org/spec/buildathon/note/0.1",
       recipient: (await connect().catch(() => undefined))?.vtaDid ?? "did:web:inbox.buildathon.example",
       issuedAt,
       payload: { title: "from the browser", body: "signed by my wallet" },
     };
-    return w.signTrustTask({ envelope });
+    return w.signTrustTask({ envelope: doc }); // the extension's API names the Trust Task document `envelope`
   });
 }
 detectWallet();
