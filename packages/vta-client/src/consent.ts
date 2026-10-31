@@ -8,6 +8,7 @@
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { base58 } from "@scure/base";
+import { resolveDIDFromLog } from "didwebvh-ts";
 import { canonicalBytes, fromMultibase, signTrustTask } from "@openvtc/trust-tasks-proof";
 import { TrustTaskError } from "./client.js";
 import { rfc3339 } from "./time.js";
@@ -83,12 +84,46 @@ export function keyFromDidDocument(doc: any, vmId: string): Uint8Array | undefin
   return raw[0] === ED25519_PUB[0] && raw[1] === ED25519_PUB[1] && raw.length === 34 ? raw.slice(2) : undefined;
 }
 
-/** The VTA's current DID document, from its self-hosted log (last entry). */
-export async function fetchVtaDocument(baseUrl: string, fetchImpl: typeof fetch = (...a) => fetch(...a)): Promise<any> {
+/**
+ * The Ed25519 key of `vmId` only if the DID document lists it under `authentication` (by reference, relative `#id`, or
+ * embedded) and the method's `controller` is `controller` (SPEC 4.7.3 items 2-3: the purpose the proof names, and a key
+ * the issuer controls). Undefined otherwise.
+ */
+export function authenticationKey(doc: any, vmId: string, controller: string): Uint8Array | undefined {
+  const did = doc?.id;
+  const abs = (id: unknown) => (typeof id === "string" && id.startsWith("#") && typeof did === "string" ? did + id : id);
+  const want = abs(vmId);
+  const listed = (doc?.authentication ?? []).map((a: any) => (typeof a === "string" ? { id: abs(a) } : { ...a, id: abs(a?.id) }));
+  const ref = listed.find((a: any) => a.id === want);
+  if (!ref) return undefined;
+  const vm = ref.type || ref.publicKeyMultibase ? ref : (doc?.verificationMethod ?? []).map((m: any) => ({ ...m, id: abs(m.id) })).find((m: any) => m.id === want);
+  if (!vm || vm.controller !== controller) return undefined;
+  return keyFromDidDocument({ verificationMethod: [vm] }, vm.id);
+}
+
+const ed25519Verifier = { verify: async (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => ed25519.verify(sig, msg, key) };
+
+/**
+ * Resolve a did:webvh from the text of its `did.jsonl`, VERIFYING the log with `didwebvh-ts` (SCID derivation, the
+ * entry-hash/versionId chain, and each entry's proof by an authorised update key), not trusting the last line.
+ * Throws if any check fails. `expectedDid`, when given, must be the resolved DID.
+ */
+export async function verifiedDidWebvh(logText: string, expectedDid?: string): Promise<{ did: string; doc: any }> {
+  const log = logText.trim().split("\n").map((l) => JSON.parse(l));
+  const r = await resolveDIDFromLog(log, { verifier: ed25519Verifier });
+  if (expectedDid !== undefined && r.did !== expectedDid) throw new Error(`the DID log resolves to ${r.did}, not ${expectedDid}`);
+  return { did: r.did, doc: r.doc };
+}
+
+/** The VTA's current DID document from its self-hosted log, after verifying the whole log (see {@link verifiedDidWebvh}). */
+export async function fetchVtaDocument(baseUrl: string, fetchImpl: typeof fetch = (...a) => fetch(...a), expectedDid?: string): Promise<any> {
   const res = await fetchImpl(`${baseUrl}/.well-known/did.jsonl`);
   if (!res.ok) throw new Error(`GET /.well-known/did.jsonl -> HTTP ${res.status}`);
-  const lines = (await res.text()).trim().split("\n");
-  return JSON.parse(lines[lines.length - 1]).state;
+  try {
+    return (await verifiedDidWebvh(await res.text(), expectedDid)).doc;
+  } catch (e) {
+    throw new Error(`the VTA's did:webvh log at ${baseUrl} does not verify: ${(e as Error).message}`);
+  }
 }
 
 export interface VerifiedConsentRequest {
@@ -110,8 +145,9 @@ export interface VerifyOptions {
   now?: Date;
 }
 
-/** Check a request the way `vta_sdk::task_consent::ConsentRequest::verify` does: type, proof under `authentication` by the
- *  VTA's own key, signer = issuer = this VTA, addressed to this approver, not expired. Throws with the reason. */
+/** Check a request the way `vta_sdk::task_consent::ConsentRequest::verify` does: type, proof under `authentication` by a
+ *  key the VTA's DID document lists under `authentication` and that the VTA controls, signer = issuer = this VTA, addressed to
+ *  this approver, not expired. Throws with the reason. Pass a `vtaDocument` from {@link fetchVtaDocument} (log verified). */
 export function verifyConsentRequest(doc: any, o: VerifyOptions): VerifiedConsentRequest {
   if (doc?.type !== CONSENT_REQUEST) throw new Error(`not a task-consent request (type ${doc?.type})`);
   const proof = doc.proof;
@@ -119,8 +155,9 @@ export function verifyConsentRequest(doc: any, o: VerifyOptions): VerifiedConsen
   if (proof.proofPurpose !== "authentication") throw new Error(`request proof purpose is ${proof.proofPurpose}, not authentication`);
   if (doc.issuer !== o.vtaDid) throw new Error("request was not issued by this VTA");
   if (typeof proof.verificationMethod !== "string" || proof.verificationMethod.split("#")[0] !== o.vtaDid) throw new Error("request is not signed by this VTA's key");
-  const key = keyFromDidDocument(o.vtaDocument, proof.verificationMethod);
-  if (!key) throw new Error("the VTA's DID document has no Ed25519 key for the proof's verification method");
+  if (o.vtaDocument?.id !== o.vtaDid) throw new Error("the DID document given is not the VTA's");
+  const key = authenticationKey(o.vtaDocument, proof.verificationMethod, o.vtaDid);
+  if (!key) throw new Error("the proof's verification method is not an Ed25519 key the VTA's DID document lists under authentication with the VTA as controller");
   const { proof: _p, ...body } = doc;
   const { proofValue, ...config } = proof;
   const hashData = new Uint8Array([...sha256(canonicalBytes(config)), ...sha256(canonicalBytes(body))]);

@@ -16,7 +16,8 @@ const DIGEST = digestOf(sha256(new TextEncoder().encode("example payload")));
 const vtaSeed = ed25519.utils.randomSecretKey();
 const VTA = "did:webvh:Qmexample:localhost%3A8100";
 const vtaSigner: Signer = { curve: "ed25519", did: VTA, verificationMethod: `${VTA}#key-0`, sign: (h) => ed25519.sign(h, vtaSeed) };
-const vtaDoc = { id: VTA, verificationMethod: [{ id: `${VTA}#key-0`, publicKeyMultibase: "z" + base58.encode(Uint8Array.from([0xed, 0x01, ...ed25519.getPublicKey(vtaSeed)])) }] };
+const vtaPub = "z" + base58.encode(Uint8Array.from([0xed, 0x01, ...ed25519.getPublicKey(vtaSeed)]));
+const vtaDoc = { id: VTA, verificationMethod: [{ id: `${VTA}#key-0`, type: "Multikey", controller: VTA, publicKeyMultibase: vtaPub }], authentication: [`${VTA}#key-0`] };
 const approver = newIdentity();
 
 function request(over: { recipient?: string; expiresAt?: string; effects?: unknown[]; purpose?: string; issuer?: string } = {}) {
@@ -54,7 +55,7 @@ test("verification refuses tampering, a wrong issuer, recipient, purpose, key or
   assert.throws(() => verifyConsentRequest(request({ purpose: "assertionMethod" }), opts), /not authentication/);
   assert.throws(() => verifyConsentRequest(request({ expiresAt: "2020-01-01T00:00:00Z" }), opts), /expired/);
   assert.throws(() => verifyConsentRequest(good, { ...opts, vtaDid: "did:webvh:Qmother:localhost" }), /not issued by this VTA/);
-  const otherKey = { id: VTA, verificationMethod: [{ id: `${VTA}#key-0`, publicKeyMultibase: "z" + base58.encode(Uint8Array.from([0xed, 0x01, ...ed25519.getPublicKey(ed25519.utils.randomSecretKey())])) }] };
+  const otherKey = { id: VTA, authentication: [`${VTA}#key-0`], verificationMethod: [{ id: `${VTA}#key-0`, controller: VTA, publicKeyMultibase: "z" + base58.encode(Uint8Array.from([0xed, 0x01, ...ed25519.getPublicKey(ed25519.utils.randomSecretKey())])) }] };
   assert.throws(() => verifyConsentRequest(good, { ...opts, vtaDocument: otherKey }), /signature does not verify/);
   assert.throws(() => verifyConsentRequest({ ...good, proof: undefined }, opts), /no eddsa-jcs-2022 proof/);
   assert.equal(keyFromDidDocument({ verificationMethod: [] }, "x#k"), undefined);
@@ -103,4 +104,37 @@ test("withConsent stops, without asking again, when the challenge changes or tim
   await assert.rejects(withConsent(async () => { throw gated("c1"); }, { onChallenge() {}, sleep: async () => {}, timeoutMs: -1 }), /timed out/);
   await assert.rejects(withConsent(async () => { throw new Error("boom"); }, { onChallenge() {} }), /boom/);
   assert.ok(identityFromSeed(ed25519.utils.randomSecretKey()).did.startsWith("did:key:"));
+});
+
+test("the request's key must be listed under authentication and controlled by the VTA (SPEC 4.7.3 items 2-3)", () => {
+  const vm = vtaDoc.verificationMethod[0];
+  const opts = (doc: unknown) => ({ vtaDid: VTA, approverDid: approver.did, vtaDocument: doc, now: new Date("2026-01-01T00:01:00Z") });
+  assert.ok(verifyConsentRequest(request(), opts(vtaDoc)));
+  assert.throws(() => verifyConsentRequest(request(), opts({ ...vtaDoc, authentication: [], assertionMethod: [vm.id] })), /authentication/);
+  assert.throws(() => verifyConsentRequest(request(), opts({ ...vtaDoc, verificationMethod: [{ ...vm, controller: "did:example:someone-else" }] })), /controller/);
+  // A relative reference and an embedded method are both accepted.
+  assert.ok(verifyConsentRequest(request(), opts({ ...vtaDoc, authentication: ["#key-0"] })));
+  assert.ok(verifyConsentRequest(request(), opts({ id: VTA, authentication: [vm] })));
+  assert.throws(() => verifyConsentRequest(request(), opts({ ...vtaDoc, id: "did:example:other" })), /not the VTA's/);
+});
+
+test("verifiedDidWebvh resolves a did:webvh log only when it verifies; a tampered log is refused", async () => {
+  const { createDID, multibaseEncode, MultibaseEncoding, prepareDataForSigning } = await import("didwebvh-ts");
+  const { verifiedDidWebvh } = await import("../src/index.js");
+  const seed = ed25519.utils.randomSecretKey();
+  const pub = "z" + base58.encode(Uint8Array.from([0xed, 0x01, ...ed25519.getPublicKey(seed)]));
+  const vmId = `did:key:${pub}#${pub}`;
+  const signer = {
+    getVerificationMethodId: () => vmId,
+    sign: async (input: any) => ({ proofValue: multibaseEncode(ed25519.sign(await prepareDataForSigning(input.document, input.proof), seed), MultibaseEncoding.BASE58_BTC) }),
+  };
+  const verifier = { verify: async (sig: Uint8Array, msg: Uint8Array, key: Uint8Array) => ed25519.verify(sig, msg, key) };
+  const made = await createDID({ address: "localhost:8100", signer: signer as any, verifier, updateKeys: [pub], verificationMethods: [{ type: "Multikey", publicKeyMultibase: pub, purpose: "authentication" } as any] });
+  const text = made.log.map((e: unknown) => JSON.stringify(e)).join("\n");
+  const r = await verifiedDidWebvh(text, made.did);
+  assert.equal(r.did, made.did);
+  await assert.rejects(verifiedDidWebvh(text, "did:example:other"), /resolves to/);
+  const forged = JSON.parse(text);
+  forged.state.verificationMethod = [{ id: `${made.did}#key-0`, type: "Multikey", controller: made.did, publicKeyMultibase: vtaPub }];
+  await assert.rejects(verifiedDidWebvh(JSON.stringify(forged)));
 });

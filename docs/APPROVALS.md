@@ -13,7 +13,8 @@ An approval *rule* says "task type X needs consent from approver set S". Then:
 1. The requester submits X. The VTA does not run it; it refuses with `auth:consent_required` and a **challenge**, and signs a
    `task-consent/request` for each approver in the set **[verified]**.
 2. The requester shows a six-character **match code**: the first six hex characters of the bytes of the request's payload digest **[verified]**.
-3. The approver verifies the request (signed by the VTA, addressed to it, not expired), compares the code on both screens, and returns a
+3. The approver verifies the request (signed by the VTA with a key its verified did:webvh log lists under `authentication`,
+   addressed to it, not expired; see [SECURITY.md](SECURITY.md#whose-did-is-this-trust-in-didjsonl)), compares the code on both screens, and returns a
    signed `task-consent/decision` **[verified]**.
 4. The requester submits the *identical* task again; the VTA runs it once and spends the approval **[verified]**.
 
