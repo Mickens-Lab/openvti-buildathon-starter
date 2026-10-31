@@ -11,9 +11,12 @@
 //  - An applicant is not a member yet, so it cannot `authenticate`. It reads
 //    the manifest (public), submits, and polls status, all as signed documents.
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
-import { TASK as VTA_TASK, TT, TrustTaskError, emitTrace, fetchVtaDid, rfc3339, siopIdToken, type Identity } from "@buildathon/vta-client";
+import {
+  TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, refusalCode, replyCode, rfc3339, servedVersions,
+  siopIdToken, unwrapReply, type Identity, type Reply, type ReplyKind,
+} from "@buildathon/vta-client";
 
-export { TrustTaskError };
+export { TrustTaskError, TrustTaskPending, refusalCode } from "@buildathon/vta-client";
 
 export const VTC_TASK = {
   challenge: VTA_TASK.challenge,
@@ -69,6 +72,16 @@ export const VTC_TASK = {
 } as const;
 
 export const DEFAULT_VTC_URL = "http://localhost:8200";
+
+/**
+ * Whether a refusal lets a client step down to `version`: the code must be `unsupportedVersion` or `unsupportedType`
+ * (never a match on the message), and when the consumer listed `details.servedVersions`, `version` must be in it.
+ */
+export function versionStepAllowed(body: unknown, version: string): boolean {
+  if (!isUnsupportedVersion(body)) return false;
+  const served = servedVersions(body);
+  return served === undefined || served.includes(version);
+}
 
 export interface JoinCriterion {
   id: string;
@@ -136,12 +149,10 @@ export interface CallEvent {
   payload: Record<string, unknown>;
   /** The full signed document as POSTed. Absent for REST calls. */
   request?: unknown;
-}
-
-/** The refusal code carried by an error body, e.g. `...:notFound`, or undefined. */
-export function refusalCode(body: unknown): string | undefined {
-  const c = (body as any)?.payload?.code ?? (body as any)?.code;
-  return typeof c === "string" ? c : undefined;
+  /** How the reply was classified (SPEC 4.4.1, plus the HTTPS binding's empty 202/204). Absent for REST calls. */
+  kind?: ReplyKind;
+  /** The reply named another exchange in `threadId` (reported, not refused: SPEC 4.9). */
+  threadMismatch?: boolean;
 }
 
 // --- the member's own membership credential (vtc/members/vmc/0.1) ------------------------------
@@ -250,11 +261,12 @@ export class VtcClient {
     emitTrace({ ts: e.startedAt, source: "vtc", transport: "rest", type: e.type, id: req?.id, from: e.issuer, to: req?.recipient ?? this.vtcDid, status: e.status, ok: e.ok, code: e.code, ms: e.durationMs });
   }
 
-  /** Build, sign and POST one Trust Task document; returns the response payload. */
-  async call<R = any>(type: string, payload: Record<string, unknown> = {}): Promise<R> {
-    const doc = signTrustTask(
+  /** Build and sign one Trust Task document addressed to this VTC, without sending it. Keep it to resend the same bytes. */
+  build(type: string, payload: Record<string, unknown> = {}, opts: { threadId?: string } = {}): Record<string, unknown> {
+    return signTrustTask(
       {
         id: globalThis.crypto.randomUUID(),
+        ...(opts.threadId ? { threadId: opts.threadId } : {}),
         type,
         issuer: this.me.did,
         recipient: this.vtcDid,
@@ -262,10 +274,15 @@ export class VtcClient {
         payload,
       } as any,
       this.me.signer,
-    );
+    ) as unknown as Record<string, unknown>;
+  }
+
+  /** POST one already-signed document and classify the reply; throws only when nothing answered. Resending the same document is a SPEC 8.4 retry. */
+  async send(doc: Record<string, unknown>): Promise<Reply> {
+    const type = String(doc.type);
     const startedAt = new Date();
     const t0 = Date.now();
-    const base = { type, issuer: this.me.did, startedAt: startedAt.toISOString(), payload, request: doc };
+    const base = { type, issuer: this.me.did, startedAt: startedAt.toISOString(), payload: (doc.payload ?? {}) as Record<string, unknown>, request: doc };
     let res: Response;
     let text: string;
     try {
@@ -279,30 +296,33 @@ export class VtcClient {
       this.report({ ...base, durationMs: Date.now() - t0, ok: false, code: "network" });
       throw e;
     }
-    const done = { ...base, durationMs: Date.now() - t0, status: res.status };
-    let body: any;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      this.report({ ...done, ok: false, code: "unreadable" });
-      throw new TrustTaskError(res.status, text);
-    }
-    if (!res.ok || String(body?.type ?? "").includes("trust-task-error")) {
-      this.report({ ...done, ok: false, code: refusalCode(body) });
-      throw new TrustTaskError(res.status, body);
-    }
-    this.report({ ...done, ok: true });
-    return body.payload as R;
+    const reply = classifyReply(doc as { id?: string; type: string; threadId?: string }, res.status, text);
+    const ok = reply.kind === "response" || reply.kind === "no-response";
+    this.report({ ...base, durationMs: Date.now() - t0, status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}) });
+    return reply;
+  }
+
+  /**
+   * Build, sign and POST one Trust Task document; returns the response payload (`{}` for a 204). Throws
+   * {@link TrustTaskError} for a `trust-task-error` or a reply that is not this task's `#response`, and `TrustTaskPending`
+   * for a `trust-task-next-step` continuation or a 202.
+   */
+  async call<R = any>(type: string, payload: Record<string, unknown> = {}): Promise<R> {
+    return unwrapReply<R>(await this.send(this.build(type, payload)));
   }
 
   // --- applicant side (works before you are a member) ----------------------
 
-  /** The community's join criteria. Public read. Tries manifest 0.4, then 0.3. */
+  /**
+   * The community's join criteria. Public read. Tries manifest 0.4, then 0.3, stepping down ONLY when the VTC refuses
+   * 0.4 with `unsupportedVersion`/`unsupportedType`; when the refusal lists `details.servedVersions`, 0.3 is tried only
+   * if it is listed. Any other refusal (including one whose message mentions a version) is thrown as is.
+   */
   async manifest(): Promise<JoinManifest> {
     try {
       return await this.call<JoinManifest>(VTC_TASK.manifestV04, {});
     } catch (e) {
-      if (e instanceof TrustTaskError && /unsupported|version/i.test(JSON.stringify(e.body))) {
+      if (e instanceof TrustTaskError && versionStepAllowed(e.body, "0.3")) {
         return this.call<JoinManifest>(VTC_TASK.manifestV03, {});
       }
       throw e;
@@ -377,7 +397,7 @@ export class VtcClient {
     try {
       return await this.call<R>(v02, opts);
     } catch (e) {
-      if (e instanceof TrustTaskError && /unsupportedVersion|unsupportedType/.test(JSON.stringify(e.body))) {
+      if (e instanceof TrustTaskError && versionStepAllowed(e.body, "0.1")) {
         return this.call<R>(v01, opts);
       }
       throw e;

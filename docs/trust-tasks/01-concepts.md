@@ -125,10 +125,24 @@ When the transport already authenticates the sender (mutually authenticated TLS,
 
 ## How the starter sends one
 
-`VtaClient.call(type, payload)` builds `{id: uuid, type, issuer: me.did, recipient: vtaDid, issuedAt: now, payload}`,
-signs it with `eddsa-jcs-2022`, POSTs to `{baseUrl}/trust-tasks` with the bearer token if you authenticated, and returns
-`body.payload`; a non-2xx status or a `trust-task-error` type throws `TrustTaskError` **[src]**. `VtcClient.call` is the
-same against `{baseUrl}/v1/trust-tasks`, with no bearer: the signed document is the authentication.
+`VtaClient.call(type, payload)` builds `{id: uuid, type, issuer: me.did, recipient: vtaDid, issuedAt: now, payload}`
+(`issuedAt` without a `.000Z` fraction, see `rfc3339`), signs it with `eddsa-jcs-2022`, POSTs to `{baseUrl}/trust-tasks`
+with the bearer token if you authenticated, and decides the outcome by the reply's `type` alone (4.4.1), not by the HTTP
+status **[src]** `packages/vta-client/src/reply.ts`:
+
+| Reply | `call()` |
+|---|---|
+| `type` is the request's Type URI + `#response` | returns its `payload` |
+| `trust-task-error/<v>` | throws `TrustTaskError` (`e.code`, `e.details`) |
+| `trust-task-next-step/<v>` | throws `TrustTaskPending`: accepted but blocked, neither a result nor a failure |
+| empty `202` (HTTPS binding: a duplicate still executing) | throws `TrustTaskPending` |
+| empty `204` (HTTPS binding: done, no response document) | returns `{}` |
+| anything else (another type, not JSON, a proxy's HTML) | throws `TrustTaskError` |
+
+A reply whose `threadId` names another exchange is reported (`threadMismatch` on the `onCall` event), not refused: 4.9
+forbids rejecting on `threadId` alone. `build()` + `send()` split the same call so you can keep a signed document and send
+it again. `VtcClient.call` is the same against `{baseUrl}/v1/trust-tasks`, with no bearer: the signed document is the
+authentication.
 Details and snippets: [03 Using tasks](03-using-tasks.md).
 
 ## Private tasks

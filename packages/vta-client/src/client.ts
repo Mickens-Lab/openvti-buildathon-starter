@@ -1,4 +1,4 @@
-// Trust Task client for a VTA: POST signed envelopes to {baseUrl}/trust-tasks.
+// Trust Task client for a VTA: POST signed Trust Task documents to {baseUrl}/trust-tasks.
 // Plain fetch plus @openvtc/trust-tasks-proof, so it works in Node and browsers.
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
 import {
@@ -9,6 +9,9 @@ import {
 } from "./identity.js";
 import { emitTrace } from "./trace.js";
 import { rfc3339 } from "./time.js";
+import { TrustTaskError, classifyReply, isAlreadyExists, replyCode, unwrapReply, type Reply, type ReplyKind } from "./reply.js";
+
+export { TrustTaskError };
 
 export const TT = "https://trusttasks.org/spec";
 export const TASK = {
@@ -23,15 +26,6 @@ export const TASK = {
 } as const;
 
 export const DEFAULT_URL = "http://localhost:8100";
-
-export class TrustTaskError extends Error {
-  constructor(
-    public status: number,
-    public body: unknown,
-  ) {
-    super(`Trust Task failed (HTTP ${status}): ${JSON.stringify(body)}`);
-  }
-}
 
 /** The VTA's DID, read from its self-hosted did:webvh log (last log entry). */
 export async function fetchVtaDid(baseUrl: string, fetchImpl: typeof fetch = fetch): Promise<string> {
@@ -60,6 +54,10 @@ export interface CallEvent {
   payload: Record<string, unknown>;
   /** The full signed document as POSTed. */
   request?: unknown;
+  /** How the reply was classified (SPEC 4.4.1, plus the HTTPS binding's empty 202/204); absent on a network error. */
+  kind?: ReplyKind;
+  /** The reply named another exchange in `threadId` (reported, not refused: SPEC 4.9). */
+  threadMismatch?: boolean;
 }
 
 export interface Whoami {
@@ -116,15 +114,12 @@ export class VtaClient {
   /** Optional observer, called once per call after it settles (success or failure). Errors in it are swallowed. */
   onCall?: (e: CallEvent) => void;
 
-  /** Build, sign and POST one Trust Task; returns the response payload. */
-  async call<R = any>(
-    type: string,
-    payload: Record<string, unknown> = {},
-    opts: { bearer?: boolean } = {},
-  ): Promise<R> {
-    const doc = signTrustTask(
+  /** Build and sign one Trust Task document addressed to this VTA, without sending it. Keep it to resend the same bytes. */
+  build(type: string, payload: Record<string, unknown> = {}, opts: { threadId?: string } = {}): Record<string, unknown> {
+    return signTrustTask(
       {
         id: globalThis.crypto.randomUUID(),
+        ...(opts.threadId ? { threadId: opts.threadId } : {}),
         type,
         issuer: this.me.did,
         recipient: this.vtaDid,
@@ -132,38 +127,52 @@ export class VtaClient {
         payload,
       } as any,
       this.me.signer,
-    );
+    ) as unknown as Record<string, unknown>;
+  }
+
+  /**
+   * POST one already-signed document and classify the reply (it does not throw for a refusal; it throws only when
+   * nothing answered). Sending the same document again is a retry in the SPEC 8.4 sense: same `id`, same bytes.
+   */
+  async send(doc: Record<string, unknown>, opts: { bearer?: boolean } = {}): Promise<Reply> {
+    const type = String(doc.type);
+    const payload = (doc.payload ?? {}) as Record<string, unknown>;
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
     const done: CallEvent = { type, issuer: this.me.did, startedAt, durationMs: 0, ok: false, payload, request: doc };
     const report = (e: Partial<CallEvent>) => {
       const ev = { ...done, durationMs: Date.now() - t0, ...e };
       try { this.onCall?.(ev); } catch { /* an observer must never break a call */ }
-      emitTrace({ ts: startedAt, source: "vta", transport: "rest", type, id: (doc as any).id, from: this.me.did, to: this.vtaDid, status: ev.status, ok: ev.ok, code: ev.code, ms: ev.durationMs });
+      emitTrace({ ts: startedAt, source: "vta", transport: "rest", type, id: doc.id as string, from: this.me.did, to: this.vtaDid, status: ev.status, ok: ev.ok, code: ev.code, ms: ev.durationMs });
     };
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (opts.bearer !== false && this.token) headers.authorization = `Bearer ${this.token}`;
     let res: Response;
+    let text: string;
     try {
       res = await this.fetchImpl(`${this.baseUrl}/trust-tasks`, { method: "POST", headers, body: JSON.stringify(doc) });
+      text = await res.text();
     } catch (e) {
       report({ ok: false, code: "network" });
       throw e;
     }
-    const text = await res.text();
-    let body: any;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      report({ status: res.status, ok: false, code: "unreadable" });
-      throw new TrustTaskError(res.status, text);
-    }
-    if (!res.ok || String(body?.type ?? "").includes("trust-task-error")) {
-      report({ status: res.status, ok: false, code: body?.payload?.code });
-      throw new TrustTaskError(res.status, body);
-    }
-    report({ status: res.status, ok: true });
-    return body.payload as R;
+    const reply = classifyReply(doc as { id?: string; type: string; threadId?: string }, res.status, text);
+    const ok = reply.kind === "response" || reply.kind === "no-response";
+    report({ status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}) });
+    return reply;
+  }
+
+  /**
+   * Build, sign and POST one Trust Task; returns the response payload (`{}` for a 204). Throws {@link TrustTaskError} for
+   * a `trust-task-error` or a reply that is not this task's `#response`, and `TrustTaskPending` for a
+   * `trust-task-next-step` continuation or a 202 (accepted, not finished; not a failure).
+   */
+  async call<R = any>(
+    type: string,
+    payload: Record<string, unknown> = {},
+    opts: { bearer?: boolean } = {},
+  ): Promise<R> {
+    return unwrapReply<R>(await this.send(this.build(type, payload), opts));
   }
 
   /** auth/challenge then auth/authenticate; stores the bearer in `token`. */
@@ -245,7 +254,9 @@ export class VtaClient {
       await fn();
       return true;
     } catch (e) {
-      if (e instanceof TrustTaskError && /exist|conflict|already/i.test(JSON.stringify(e.body))) return false;
+      // By code only: a duplicate create is `taskFailed` + details.reason "conflict" at the VTA. `idConflict` (a reused
+      // document id) is NOT "already exists" and is rethrown, as is anything else.
+      if (e instanceof TrustTaskError && isAlreadyExists(e.body)) return false;
       throw e;
     }
   }

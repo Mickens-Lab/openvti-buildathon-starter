@@ -46,5 +46,5 @@ let token: string;
 try { token = await session.authenticate(); } catch { die(`the VTA would not open a session for the approver ${me.did} (REST needs an ACL entry; \`npm run approvals:demo\` grants one). See docs/APPROVALS.md.`); }
 const r = await submitDecision(url, decision, token);
 const p = r.body?.payload;
-if (r.status >= 300) die(`the VTA refused the decision (HTTP ${r.status}): ${JSON.stringify(p ?? r.body)}`);
+if (r.reply.kind !== "response") die(`the VTA did not accept the decision (${r.reply.kind}, HTTP ${r.status}): ${JSON.stringify(p ?? r.body)}`);
 console.log(`decision sent: ${deny ? "deny" : "approve"} -> ${p?.status ?? JSON.stringify(p)}${p?.needed ? ` (${p.approvals ?? 0}/${p.needed})` : ""}`);

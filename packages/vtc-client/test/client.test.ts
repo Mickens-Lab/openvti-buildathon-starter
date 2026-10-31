@@ -36,7 +36,7 @@ test("manifest falls back to 0.3 when 0.4 is unsupported", async () => {
   const seen: any[] = [];
   const f = fakeVtc((doc) =>
     doc.type === VTC_TASK.manifestV04
-      ? new Response(JSON.stringify({ type: "x/trust-task-error", payload: { code: "unsupportedType" } }), { status: 400 })
+      ? new Response(JSON.stringify({ type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "unsupportedType" } }), { status: 400 })
       : { communityDid: VTC_DID, criteria: [{ id: "open", requirementsDigest: "uabc", admission: "automatic" }] },
   seen);
   const c = await VtcClient.connect("http://x", newIdentity(), f);
@@ -60,7 +60,7 @@ test("submitJoin sends a holder-bound empty VP and the chosen criterion", async 
 });
 
 test("errors surface as TrustTaskError", async () => {
-  const f = fakeVtc(() => new Response(JSON.stringify({ type: "x/trust-task-error", payload: { code: "vtc/join-requests/submit:notAccepting" } }), { status: 422 }));
+  const f = fakeVtc(() => new Response(JSON.stringify({ type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "vtc/join-requests/submit:notAccepting" } }), { status: 422 }));
   const c = await VtcClient.connect("http://x", newIdentity(), f);
   await assert.rejects(c.submitJoin(), (e: any) => e instanceof TrustTaskError && e.status === 422);
 });
@@ -120,7 +120,7 @@ test("admin lists use 0.2 and fall back to 0.1 only when 0.2 is unsupported", as
   const seen: any[] = [];
   const c = await VtcClient.connect("http://localhost:8200", newIdentity(), fakeVtc((doc) => {
     if (doc.type === VTC_TASK.membersList) return { items: [{ did: "did:key:z6Mkx", role: "member" }], nextCursor: null, totalEstimate: 1 };
-    if (doc.type === VTC_TASK.joinList) return new Response(JSON.stringify({ type: "x/trust-task-error", payload: { code: "unsupportedVersion" } }), { status: 400 });
+    if (doc.type === VTC_TASK.joinList) return new Response(JSON.stringify({ type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "unsupportedVersion" } }), { status: 400 });
     if (doc.type === VTC_TASK.joinListV01) return { items: [{ id: "r1" }] };
     return {};
   }, seen));
@@ -177,7 +177,7 @@ test("leaveCommunity refuses to run without an explicit confirmation", async () 
 });
 
 test("a refusal for a non-member surfaces as TrustTaskError with the code", async () => {
-  const f = fakeVtc(() => new Response(JSON.stringify({ type: "x/trust-task-error", payload: { code: "vtc/directory/card/show:notMember", message: "not an active member" } }), { status: 422 }));
+  const f = fakeVtc(() => new Response(JSON.stringify({ type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "vtc/directory/card/show:notMember", message: "not an active member" } }), { status: 422 }));
   const c = await VtcClient.connect("http://x", newIdentity(), f);
   await assert.rejects(c.myCard(), (e: any) => e instanceof TrustTaskError && e.status === 422 && /notMember/.test(JSON.stringify(e.body)));
 });
@@ -210,7 +210,7 @@ test("portalSignIn mints a self-issued SIOP id_token bound to the challenge and 
 
 test("onCall reports each call with type, signer, timing and the signed request; it is optional", async () => {
   const me = newIdentity();
-  const c = await VtcClient.connect("http://x", me, fakeVtc((doc) => (doc.type === VTC_TASK.joinStatus ? { requestId: "r1", status: "pending" } : new Response(JSON.stringify({ type: "x/trust-task-error", payload: { code: "urn:fake:notMember" } }), { status: 403 }))));
+  const c = await VtcClient.connect("http://x", me, fakeVtc((doc) => (doc.type === VTC_TASK.joinStatus ? { requestId: "r1", status: "pending" } : new Response(JSON.stringify({ type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "urn:fake:notMember" } }), { status: 403 }))));
   await c.joinStatus(); // no observer: still works
   const events: any[] = [];
   c.onCall = (e) => events.push(e);
@@ -263,4 +263,27 @@ test("on an exact second, VtcClient.call never signs a .000Z issuedAt or proof.c
   await c.joinStatus();
   assert.equal(seen[0].doc.issuedAt, "2026-10-31T12:00:00Z");
   assert.equal(seen[0].doc.proof.created, "2026-10-31T12:00:00Z");
+});
+
+test("manifest steps down only on unsupportedVersion/unsupportedType, and follows details.servedVersions", async () => {
+  const ERR = "https://trusttasks.org/spec/trust-task-error/0.5";
+  const run = async (payload: Record<string, unknown>) => {
+    const seen: any[] = [];
+    const c = await VtcClient.connect("http://x", newIdentity(), fakeVtc((doc) =>
+      doc.type === VTC_TASK.manifestV04
+        ? new Response(JSON.stringify({ type: ERR, payload }), { status: 422 })
+        : { communityDid: VTC_DID, criteria: [] }, seen));
+    const r = await c.manifest().then(() => "ok", (e) => e);
+    return { r, types: seen.map((s) => s.doc.type) };
+  };
+  // A message that mentions a version, or another code, is not a reason to downgrade.
+  for (const p of [{ code: "taskFailed", message: "unsupported version of something" }, { code: "unsupportedExtension" }, { code: "malformedRequest", message: "version" }]) {
+    const { r, types } = await run(p);
+    assert.ok(r instanceof TrustTaskError, JSON.stringify(p));
+    assert.deepEqual(types, [VTC_TASK.manifestV04]);
+  }
+  assert.deepEqual((await run({ code: "unsupportedVersion", details: { servedVersions: [VTC_TASK.manifestV03] } })).types, [VTC_TASK.manifestV04, VTC_TASK.manifestV03]);
+  const none = await run({ code: "unsupportedVersion", details: { servedVersions: ["0.2"] } });
+  assert.ok(none.r instanceof TrustTaskError);
+  assert.deepEqual(none.types, [VTC_TASK.manifestV04]);
 });

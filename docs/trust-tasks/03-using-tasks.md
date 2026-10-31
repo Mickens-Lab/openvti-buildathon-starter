@@ -33,10 +33,12 @@ console.log((await vtc.manifest()).communityDid);
 ```
 
 - `VtaClient.call(type, payload)` signs and POSTs `{baseUrl}/trust-tasks`. `VtcClient.call` posts to
-  `{baseUrl}/v1/trust-tasks` (no bearer). Both set `id`, `issuer`, `recipient`, `issuedAt` for you and throw
-  `TrustTaskError` on a non-2xx status or a `trust-task-error` reply **[src]**.
-- `call` returns the **response payload** only. If you need the response envelope (`threadId`, `issuedAt`, proof),
-  build the POST yourself (next section) or catch the error's `body`.
+  `{baseUrl}/v1/trust-tasks` (no bearer). Both set `id`, `issuer`, `recipient`, `issuedAt` for you, return the payload
+  only of a reply typed `<request type>#response`, throw `TrustTaskError` for a `trust-task-error` (or any reply that is
+  not this task's response), and throw `TrustTaskPending` for a `trust-task-next-step` or an empty `202` **[src]**
+  ([01 Concepts](01-concepts.md#how-the-starter-sends-one) has the table).
+- `call` returns the **response payload** only. If you need the whole response document (`threadId`, `issuedAt`, proof),
+  use `send(build(type, payload))`, which returns the classified reply with its `document`, or catch the error's `body`.
 - The type string is the version you speak. `TASK` in `vta-client` and `VTC_TASK` in `vtc-client` list the ones the
   starter uses; any other Type URI works with `call()`, as above.
 - An empty payload `{}` is legal for many tasks, including some that **act** (`members/self-remove`,

@@ -39,7 +39,7 @@ try {
     if (v.matchCode !== c.matchCode) throw new Error("the approver's code differs from the requester's; stopping");
     const token = await (await VtaClient.connect(url, me, undefined, doc.id)).authenticate();
     const r = await submitDecision(url, buildDecision(v, me, doc.id, { approve: true, typedCode: v.matchCode }), token);
-    console.log(`--self-approve: decision sent -> HTTP ${r.status} ${JSON.stringify(r.body?.payload)}`);
+    console.log(`--self-approve: decision sent -> ${r.reply.kind} (HTTP ${r.status}) ${JSON.stringify(r.body?.payload)}`);
   },
 });
 } catch (e) {

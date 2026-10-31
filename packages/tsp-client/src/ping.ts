@@ -8,7 +8,7 @@ import {
 } from "@openvtc/pnm-core";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
-import { rfc3339 } from "@buildathon/vta-client";
+import { classifyDocument, rfc3339 } from "@buildathon/vta-client";
 import { TspSession, type TspKeys } from "./session.js";
 import type { PeerIdentity } from "./peer.js";
 
@@ -79,6 +79,19 @@ export function documentSigner(signing: { did: string; kid: string; privateKey: 
       (doc as { proof?: unknown }).proof = signed.proof;
     },
   };
+}
+
+/**
+ * A reply to the ping is a pong only if its `type` says so (SPEC 4.4.1): a `trust-task-error` is thrown with its code, a
+ * `trust-task-next-step` or another type is refused. In-band `issuer`/`recipient`, when present, must be the peer and us
+ * (the TSP layer already authenticated the sender VID).
+ */
+export function checkPingReply(request: { id?: string; type: string }, reply: any, ownVid: string, peerVid: string): void {
+  const r = classifyDocument(request, reply);
+  if (r.kind === "error") throw new Error(`the VTA refused the ping: ${r.code ?? "no code"}${reply?.payload?.message ? ` (${reply.payload.message})` : ""}`);
+  if (r.kind !== "response") throw new Error(`the reply is not a ${PING_RESPONSE_TYPE} (${r.kind}: ${reply?.type})`);
+  if (reply.issuer !== undefined && reply.issuer !== peerVid) throw new Error(`the reply's issuer ${reply.issuer} is not the VTA ${peerVid}`);
+  if (reply.recipient !== undefined && reply.recipient !== ownVid) throw new Error(`the reply is addressed to ${reply.recipient}, not to ${ownVid}`);
 }
 
 export interface TspClient {
@@ -164,9 +177,11 @@ export async function tspPing(opts: PingOptions): Promise<PingResult> {
     const nonce = crypto.randomUUID();
     const envelope = buildTrustTask(PING_TYPE, { nonce }, { issuer: c.did, recipient: opts.vtaDid, issuedAt: rfc3339() });
     id = envelope.id;
-    await signOutboundTask(envelope, documentSigner(c.signing)); // the VTA refuses an unproven document (ProofRequired)
+    // The ping spec lets the proof be omitted over TSP; the VTA requires one by local policy (`proofRequired`).
+    await signOutboundTask(envelope, documentSigner(c.signing));
     log("sending messaging/ping/0.1 over TSP");
     const reply = await c.session.request(envelope, timeoutMs, (d) => d.threadId === envelope.id);
+    checkPingReply(envelope, reply, c.did, opts.vtaDid);
     const pong = reply.payload as PongPayload;
     if (!isPong(pong, nonce)) throw new Error(`the reply was not a pong for this ping: ${JSON.stringify(pong)}`);
     return { clientDid: c.did, nonce, pong, elapsedMs: Date.now() - t0 };

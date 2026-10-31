@@ -23,3 +23,15 @@ test("documentSigner: on an exact second the ping carries no .000Z issuedAt or p
   assert.equal(doc.proof.created, "2026-10-31T12:00:00Z");
   assert.equal(await new DataIntegrityProofVerifier().verify(doc), true);
 });
+
+test("checkPingReply: only a #response from the peer to us is a pong; an error surfaces its code", async () => {
+  const { checkPingReply, PING_TYPE, PING_RESPONSE_TYPE } = await import("../src/index.js");
+  const req = { id: "p1", type: PING_TYPE };
+  checkPingReply(req, { type: PING_RESPONSE_TYPE, threadId: "p1", payload: {} }, "did:example:me", "did:example:vta");
+  checkPingReply(req, { type: PING_RESPONSE_TYPE, issuer: "did:example:vta", recipient: "did:example:me", payload: {} }, "did:example:me", "did:example:vta");
+  assert.throws(() => checkPingReply(req, { type: "https://trusttasks.org/spec/trust-task-error/0.5", payload: { code: "permissionDenied" } }, "a", "b"), /permissionDenied/);
+  assert.throws(() => checkPingReply(req, { type: "https://trusttasks.org/spec/trust-task-next-step/0.1", payload: {} }, "a", "b"), /next-step/);
+  assert.throws(() => checkPingReply(req, { type: PING_TYPE, payload: {} }, "a", "b"), /not a/);
+  assert.throws(() => checkPingReply(req, { type: PING_RESPONSE_TYPE, issuer: "did:example:other", payload: {} }, "did:example:me", "did:example:vta"), /issuer/);
+  assert.throws(() => checkPingReply(req, { type: PING_RESPONSE_TYPE, recipient: "did:example:other", payload: {} }, "did:example:me", "did:example:vta"), /addressed/);
+});

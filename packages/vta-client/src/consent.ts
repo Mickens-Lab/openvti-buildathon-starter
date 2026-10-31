@@ -11,6 +11,7 @@ import { base58 } from "@scure/base";
 import { canonicalBytes, fromMultibase, signTrustTask } from "@openvtc/trust-tasks-proof";
 import { TrustTaskError } from "./client.js";
 import { rfc3339 } from "./time.js";
+import { classifyReply, type Reply } from "./reply.js";
 import type { Identity } from "./identity.js";
 
 export const CONSENT_REQUEST = "https://trusttasks.org/spec/task-consent/request/0.1";
@@ -159,10 +160,12 @@ export function buildDecision(v: VerifiedConsentRequest, approver: Identity, vta
  * that fallback is for the messaging transports: over REST the VTA answers 401 without a session, and an approver with no ACL
  * entry cannot get one ("authentication failed", observed on 0.65.0). So the demo gives the approver a minimal `monitor` entry.
  */
-export async function submitDecision(baseUrl: string, decision: unknown, token: string, fetchImpl: typeof fetch = (...a) => fetch(...a)): Promise<{ status: number; body: any }> {
+export async function submitDecision(baseUrl: string, decision: unknown, token: string, fetchImpl: typeof fetch = (...a) => fetch(...a)): Promise<{ status: number; body: any; reply: Reply }> {
   const res = await fetchImpl(`${baseUrl}/trust-tasks`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body: JSON.stringify(decision) });
   const text = await res.text();
-  try { return { status: res.status, body: JSON.parse(text) }; } catch { return { status: res.status, body: text }; }
+  // `reply.kind` is the disposition (decided by the reply's type, SPEC 4.4.1); `status` is informative only.
+  const reply = classifyReply(decision as { id?: string; type: string }, res.status, text);
+  return { status: res.status, body: reply.document ?? text, reply };
 }
 
 export interface WithConsentOptions {
