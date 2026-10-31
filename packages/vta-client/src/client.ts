@@ -8,6 +8,7 @@ import {
   type Identity,
 } from "./identity.js";
 import { emitTrace } from "./trace.js";
+import { rfc3339 } from "./time.js";
 
 export const TT = "https://trusttasks.org/spec";
 export const TASK = {
@@ -127,7 +128,7 @@ export class VtaClient {
         type,
         issuer: this.me.did,
         recipient: this.vtaDid,
-        issuedAt: new Date().toISOString(),
+        issuedAt: rfc3339(),
         payload,
       } as any,
       this.me.signer,
@@ -223,7 +224,7 @@ export class VtaClient {
           role: "admin",
           scopes: [context],
           label,
-          expiresAt: new Date(Date.now() + expiresInMs).toISOString(),
+          expiresAt: rfc3339(new Date(Date.now() + expiresInMs)),
           ext: { "org.openvtc.handoff": true },
         },
         reason: "VTC setup hand-off",

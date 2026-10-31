@@ -1,4 +1,4 @@
-import { VtaClient, decodeCredential, identityFromCredential } from "@buildathon/vta-client";
+import { VtaClient, decodeCredential, identityFromCredential, rfc3339 } from "@buildathon/vta-client";
 import { VtcClient } from "@buildathon/vtc-client";
 import { applicantRule, mountStatusPanel, tunnelBanner } from "@buildathon/status-panel";
 
@@ -88,7 +88,7 @@ function detectWallet() {
   $("wallet-actions").hidden = false;
   $("wallet-profile").onclick = guard(() => w.walletProfile({}));
   $("wallet-sign").onclick = guard(async () => {
-    const issuedAt = new Date().toISOString();
+    const issuedAt = rfc3339();
     // The wallet's holder DID signs; set recipient before signing (audience binding).
     const envelope = {
       id: crypto.randomUUID(),

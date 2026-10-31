@@ -10,6 +10,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { base58 } from "@scure/base";
 import { canonicalBytes, fromMultibase, signTrustTask } from "@openvtc/trust-tasks-proof";
 import { TrustTaskError } from "./client.js";
+import { rfc3339 } from "./time.js";
 import type { Identity } from "./identity.js";
 
 export const CONSENT_REQUEST = "https://trusttasks.org/spec/task-consent/request/0.1";
@@ -148,7 +149,7 @@ export function buildDecision(v: VerifiedConsentRequest, approver: Identity, vta
     ...(!choice.approve && choice.reason ? { reason: choice.reason } : {}),
   };
   return signTrustTask(
-    { id: globalThis.crypto.randomUUID(), type: CONSENT_DECISION, issuer: approver.did, recipient: vtaDid, issuedAt: new Date().toISOString(), payload } as any,
+    { id: globalThis.crypto.randomUUID(), type: CONSENT_DECISION, issuer: approver.did, recipient: vtaDid, issuedAt: rfc3339(), payload } as any,
     approver.signer,
   );
 }

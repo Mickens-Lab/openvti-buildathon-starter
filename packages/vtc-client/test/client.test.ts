@@ -253,3 +253,14 @@ test("joinPayload returns what submitJoin signs, without sending", async () => {
   await c.submitJoin({ criterion: "uabc" });
   assert.deepEqual(seen[0].doc.payload, p);
 });
+
+test("on an exact second, VtcClient.call never signs a .000Z issuedAt or proof.created", async (t) => {
+  const { mock } = await import("node:test");
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-31T12:00:00.000Z") });
+  t.after(() => mock.timers.reset());
+  const seen: any[] = [];
+  const c = await VtcClient.connect("http://vtc.test", newIdentity(), fakeVtc(() => ({}), seen));
+  await c.joinStatus();
+  assert.equal(seen[0].doc.issuedAt, "2026-10-31T12:00:00Z");
+  assert.equal(seen[0].doc.proof.created, "2026-10-31T12:00:00Z");
+});

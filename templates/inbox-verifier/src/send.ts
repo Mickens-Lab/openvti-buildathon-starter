@@ -1,7 +1,7 @@
 // Build, sign and POST a note. Shows the three outcomes a verifier must get right.
 //   npm run send -w @buildathon/inbox-verifier [-- --replay | --tamper]
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
-import { newIdentity, type Identity } from "@buildathon/vta-client";
+import { newIdentity, rfc3339, type Identity } from "@buildathon/vta-client";
 import { NOTE_TYPE } from "./inbox.js";
 
 export function makeNote(me: Identity, recipient: string, title: string, body: string) {
@@ -11,7 +11,7 @@ export function makeNote(me: Identity, recipient: string, title: string, body: s
       type: NOTE_TYPE,
       issuer: me.did,
       recipient,
-      issuedAt: new Date().toISOString(),
+      issuedAt: rfc3339(),
       payload: { title, body },
     } as any,
     me.signer,

@@ -11,7 +11,7 @@
 //  - An applicant is not a member yet, so it cannot `authenticate`. It reads
 //    the manifest (public), submits, and polls status, all as signed documents.
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
-import { TASK as VTA_TASK, TT, TrustTaskError, emitTrace, fetchVtaDid, siopIdToken, type Identity } from "@buildathon/vta-client";
+import { TASK as VTA_TASK, TT, TrustTaskError, emitTrace, fetchVtaDid, rfc3339, siopIdToken, type Identity } from "@buildathon/vta-client";
 
 export { TrustTaskError };
 
@@ -168,9 +168,6 @@ export interface MemberVmcOpts {
   issuerScope?: "pairwise" | "directed" | "public";
 }
 
-/** RFC 3339, UTC, no fraction when it is all zeros (the form the Rust side writes). */
-const rfc3339 = (d: Date) => d.toISOString().replace(/\.000Z$/, "Z");
-
 /** The member's MembershipCredential naming the community, unsigned and with no digest (so unbound to the community's grant). */
 export function memberVmc(o: MemberVmcOpts): Record<string, unknown> {
   return {
@@ -261,7 +258,7 @@ export class VtcClient {
         type,
         issuer: this.me.did,
         recipient: this.vtcDid,
-        issuedAt: new Date().toISOString(),
+        issuedAt: rfc3339(),
         payload,
       } as any,
       this.me.signer,

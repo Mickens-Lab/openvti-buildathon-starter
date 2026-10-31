@@ -26,3 +26,12 @@ test("rejects tampered, unsigned and misaddressed documents", async () => {
   }
   assert.equal(inbox.notes.length, 0);
 });
+
+test("makeNote on an exact second signs no .000Z issuedAt or proof.created", async (t) => {
+  const { mock } = await import("node:test");
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-31T12:00:00.000Z") });
+  t.after(() => mock.timers.reset());
+  const doc: any = makeNote(newIdentity(), ME, "t", "b");
+  assert.equal(doc.issuedAt, "2026-10-31T12:00:00Z");
+  assert.equal(doc.proof.created, "2026-10-31T12:00:00Z");
+});
