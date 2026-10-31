@@ -117,7 +117,7 @@ member's **own** membership credential, sent back to the community (`vtc/members
 
 The community dashboard can send that credential back: the membership card's **Send my membership credential back** (after a confirm)
 signs a DTG `MembershipCredential` as the member (issuer: the applicant `did:key` or `did:peer:2`; subject: the community's DID;
-`issuerScope: directed`; an `eddsa-jcs-2022` proof for `assertionMethod`, the same proof the kit puts on every Trust Task) and sends
+`issuerScope: directed`; an `eddsa-jcs-2022` proof for `assertionMethod`, as a credential is an assertion; the Trust Task carrying it is signed for `authentication`) and sends
 `{ vc }` to `vtc/members/vmc/0.1` over REST, so it works in every mode (`local` too: no messaging is involved). It carries **no**
 `digestMultibase` of the community's grant, so the VTC stores it **unbound**: `credentialsDelivered` turns `true`, but the membership
 pair stays incomplete (the VTC logs a warning). Binding it would need the grant, which the kit could only get by renewing the membership

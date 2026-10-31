@@ -31,3 +31,22 @@ test("on an exact second, VtaClient.call and buildDecision never sign a .000Z is
   assert.equal(decision.proof.created, "2026-10-31T12:00:00Z");
   assert.doesNotMatch(JSON.stringify([sent, decision]), /\.000Z/);
 });
+
+test("purposeFor: authentication for ordinary requests; assertionMethod only for a registry attestation request", async () => {
+  const { purposeFor, isSigningPurpose } = await import("../src/index.js");
+  const T = "https://trusttasks.org/spec";
+  assert.equal(purposeFor(`${T}/auth/whoami/0.1`), "authentication");
+  assert.equal(purposeFor(`${T}/acl/grant/0.1`), "authentication");
+  assert.equal(purposeFor(`${T}/task-consent/decision/0.1`), "assertionMethod");
+  assert.equal(purposeFor(`${T}/task-consent/decision/0.2#request`), "assertionMethod");
+  assert.equal(purposeFor(`${T}/task-consent/decision/0.1#response`), "authentication");
+  assert.equal(purposeFor("https://example.org/spec/task-consent/decision/0.1"), "authentication");
+  assert.ok(isSigningPurpose("authentication") && !isSigningPurpose("keyAgreement") && !isSigningPurpose("x"));
+  let sent: any;
+  const c = new VtaClient("http://vta.test", "did:example:vta", newIdentity(), (async (_u: any, init: any) => {
+    sent = JSON.parse(init.body);
+    return new Response(JSON.stringify({ type: sent.type + "#response", payload: {} }));
+  }) as typeof fetch);
+  await c.whoami();
+  assert.equal(sent.proof.proofPurpose, "authentication");
+});

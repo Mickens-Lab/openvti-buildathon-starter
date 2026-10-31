@@ -4,5 +4,6 @@ export * from "./consent.js";
 export * from "./trace.js";
 export * from "./time.js";
 export * from "./reply.js";
+export * from "./purpose.js";
 export * from "./cors.js";
 export * from "./fetch-hint.js";

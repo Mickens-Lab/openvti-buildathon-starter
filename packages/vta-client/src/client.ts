@@ -9,6 +9,7 @@ import {
 } from "./identity.js";
 import { emitTrace } from "./trace.js";
 import { rfc3339 } from "./time.js";
+import { purposeFor } from "./purpose.js";
 import { TrustTaskError, classifyReply, isAlreadyExists, replyCode, unwrapReply, type Reply, type ReplyKind } from "./reply.js";
 
 export { TrustTaskError };
@@ -127,6 +128,7 @@ export class VtaClient {
         payload,
       } as any,
       this.me.signer,
+      { proofPurpose: purposeFor(type) }, // authentication, except attestation tasks (SPEC 4.7.3)
     ) as unknown as Record<string, unknown>;
   }
 

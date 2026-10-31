@@ -80,3 +80,17 @@ test("makeNote on an exact second signs no .000Z issuedAt or proof.created", asy
   assert.equal(doc.issuedAt, "2026-10-31T12:00:00Z");
   assert.equal(doc.proof.created, "2026-10-31T12:00:00Z");
 });
+
+test("signs notes for authentication; refuses a proof whose purpose is keyAgreement or unknown, even if the signature is good", async () => {
+  const inbox = createInbox(ME);
+  const me = newIdentity();
+  assert.equal((makeNote(me, ME, "t", "b") as any).proof.proofPurpose, "authentication");
+  for (const purpose of ["keyAgreement", "madeUp"]) {
+    const doc = signTrustTask({ id: crypto.randomUUID(), type: NOTE_TYPE, issuer: me.did, recipient: ME, issuedAt: rfc3339(), payload: { title: "t", body: "b" } } as any, me.signer, { proofPurpose: purpose }) as any;
+    const v: any = await inbox.receive(doc);
+    assert.equal(v.kind, "rejected", purpose);
+    assert.equal(v.code, "proofInvalid", purpose);
+  }
+  const ok = signTrustTask({ id: crypto.randomUUID(), type: NOTE_TYPE, issuer: me.did, recipient: ME, issuedAt: rfc3339(), payload: { title: "t", body: "b" } } as any, me.signer, { proofPurpose: "assertionMethod" }) as any;
+  assert.equal((await inbox.receive(ok)).kind, "accepted");
+});

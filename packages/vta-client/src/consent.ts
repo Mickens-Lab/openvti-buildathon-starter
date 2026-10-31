@@ -152,6 +152,7 @@ export function buildDecision(v: VerifiedConsentRequest, approver: Identity, vta
   return signTrustTask(
     { id: globalThis.crypto.randomUUID(), type: CONSENT_DECISION, issuer: approver.did, recipient: vtaDid, issuedAt: rfc3339(), payload } as any,
     approver.signer,
+    { proofPurpose: "assertionMethod" }, // task-consent/decision is an attestation: its spec requires assertionMethod
   );
 }
 

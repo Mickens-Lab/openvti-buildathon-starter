@@ -13,7 +13,7 @@ import {
   type TrustTaskDocument,
 } from "@openvtc/trust-tasks/runtime";
 import { DataIntegrityProofVerifier } from "@openvtc/trust-tasks-proof";
-import { isRequestOf, rfc3339 } from "@buildathon/vta-client";
+import { isRequestOf, isSigningPurpose, rfc3339 } from "@buildathon/vta-client";
 
 /** A made-up Trust Task for the buildathon. Replace with your own, or pin a
  *  registry task with `trust-tasks generate` (see the README). */
@@ -87,6 +87,21 @@ export function typeRefusal(type: unknown): RejectReason | null {
   return { code: "unsupportedType", message: `this inbox serves requests of ${NOTE_TYPE} only`, retryable: false };
 }
 
+/**
+ * The proof verifier, plus the check `@openvtc/trust-tasks-proof` 0.1.6 leaves out: SPEC 4.7.3 item 1 says a consumer MUST
+ * reject a proof whose `proofPurpose` is `keyAgreement` or names no signing relationship. The library checks that a purpose
+ * is present, not what it says. (For a did:key both would name the same Ed25519 key; the check matters for DIDs with
+ * separate keys per relationship, and so that this template teaches it as done.) A refused purpose is `proofInvalid`.
+ */
+export const purposeCheckingVerifier = {
+  base: new DataIntegrityProofVerifier(),
+  async verify(doc: TrustTaskDocument<unknown>): Promise<boolean> {
+    const purpose = (doc as { proof?: { proofPurpose?: unknown } }).proof?.proofPurpose;
+    if (!isSigningPurpose(purpose)) return false;
+    return this.base.verify(doc);
+  },
+};
+
 export function createInbox(myDid: string) {
   const guard = new InMemoryReplayGuard(); // one per process; use a shared store for replicas
   const notes: StoredNote[] = [];
@@ -102,7 +117,7 @@ export function createInbox(myDid: string) {
       // proof's did:key. Behind an authenticating gateway, use StaticTransport.
       transport: new UnauthenticatedTransport(),
       spec: NOTE_SPEC,
-      proofPolicy: { kind: "verify", verify: new DataIntegrityProofVerifier() },
+      proofPolicy: { kind: "verify", verify: purposeCheckingVerifier },
       payloadPolicy: { kind: "validate", validate: validateNote },
       checks: consequentialChecks(guard),
       doc,

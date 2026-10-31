@@ -12,7 +12,7 @@
 //    the manifest (public), submits, and polls status, all as signed documents.
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
 import {
-  TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, refusalCode, replyCode, rfc3339, servedVersions,
+  TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, purposeFor, refusalCode, replyCode, rfc3339, servedVersions,
   siopIdToken, unwrapReply, type Identity, type Reply, type ReplyKind,
 } from "@buildathon/vta-client";
 
@@ -192,9 +192,9 @@ export function memberVmc(o: MemberVmcOpts): Record<string, unknown> {
   };
 }
 
-/** Sign a credential as `signer` (eddsa-jcs-2022, assertionMethod): the same proof the client puts on every Trust Task. */
+/** Sign a credential as `signer` (eddsa-jcs-2022, assertionMethod: a credential is an assertion; the Trust Task that carries it is signed for authentication). */
 export function signCredential(vc: Record<string, unknown>, signer: Identity["signer"]): Record<string, unknown> {
-  return signTrustTask(vc as any, signer) as unknown as Record<string, unknown>;
+  return signTrustTask(vc as any, signer, { proofPurpose: "assertionMethod" }) as unknown as Record<string, unknown>;
 }
 
 /** The VTC's answer to `vtc/members/vmc/0.1`. `status` is `"stored"` on success. */
@@ -274,6 +274,7 @@ export class VtcClient {
         payload,
       } as any,
       this.me.signer,
+      { proofPurpose: purposeFor(type) }, // authentication, except attestation tasks (SPEC 4.7.3)
     ) as unknown as Record<string, unknown>;
   }
 

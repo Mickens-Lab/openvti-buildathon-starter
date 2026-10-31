@@ -179,7 +179,7 @@ export async function tspPing(opts: PingOptions): Promise<PingResult> {
     const doc = buildTrustTask(PING_TYPE, { nonce }, { issuer: c.did, recipient: opts.vtaDid, issuedAt: rfc3339() });
     id = doc.id;
     // The ping spec lets the proof be omitted over TSP; the VTA requires one by local policy (`proofRequired`).
-    await signOutboundTask(doc, documentSigner(c.signing));
+    await signOutboundTask(doc, documentSigner(c.signing, "authentication"));
     log("sending messaging/ping/0.1 over TSP");
     const reply = await c.session.request(doc, timeoutMs, (d) => d.threadId === doc.id);
     checkPingReply(doc, reply, c.did, opts.vtaDid);
