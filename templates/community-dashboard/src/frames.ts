@@ -37,7 +37,7 @@ export function tallyLine(t: Tally): string {
 
 /** The running conclusion: what arrived, and that it is not credentialsDelivered. */
 export function framesVerdict(t: Tally): string {
-  if (t.issues > 0) return `${t.issues} credential-exchange/issue/0.1 frame${t.issues === 1 ? "" : "s"} arrived from the VTC. The frame's type is all this page reads: the credential inside is not parsed or verified here.`;
+  if (t.issues > 0) return `${t.issues} credential-exchange/issue/0.1 frame${t.issues === 1 ? "" : "s"} arrived from the VTC. This page keeps the community's membership credential from them in memory, so "Send my membership credential back" can bind to it; it does not verify that credential's proof (the community checks the digest against the one it issued).`;
   return "No credential-exchange/issue/0.1 frame yet. It is pushed right after an administrator approves the request (`npm run vtc:approve`).";
 }
 

@@ -34,7 +34,8 @@ test("the tally and verdict count frames and never claim credentialsDelivered", 
   const t = [{ control: "invite" }, { documentType: ISSUE_TYPE }, { unreadable: "x" }].reduce(record, emptyTally());
   assert.equal(tallyLine(t), "3 frames: 1 invite, 0 accept, 1 credential-exchange/issue, 0 other, 1 unreadable");
   assert.match(framesVerdict(t), /^1 credential-exchange\/issue\/0\.1 frame arrived/);
-  assert.match(framesVerdict(t), /not parsed or verified/);
+  assert.match(framesVerdict(t), /can bind to it/);
+  assert.match(framesVerdict(t), /does not verify that credential's proof/);
   assert.match(NOT_DELIVERED_FLAG, /^Frames arriving is not credentialsDelivered/);
   assert.match(NOT_DELIVERED_FLAG, /vtc\/members\/vmc\/0\.1/);
   assert.match(ONE_LISTENER, /npm run tsp:listen.*may go to that listener/);

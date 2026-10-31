@@ -13,7 +13,7 @@
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
 import {
   TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, purposeFor, refusalCode, replyCode, rfc3339, servedVersions,
-  siopIdToken, unwrapReply, checkReplyProof, fetchDidDocument, type Identity, type Reply, type ReplyKind, type ReplyProof,
+  siopIdToken, unwrapReply, checkReplyProof, fetchDidDocument, digestMultibase, type Identity, type Reply, type ReplyKind, type ReplyProof,
 } from "@buildathon/vta-client";
 
 export { TrustTaskError, TrustTaskPending, refusalCode } from "@buildathon/vta-client";
@@ -163,9 +163,16 @@ export interface CallEvent {
 // the proof signer, whose `credentialSubject.id` is not the community's DID (`subjectMismatch`), that is not a DTG
 // MembershipCredential under the v2 + DTG contexts declaring an `issuerScope`, that has no top-level `id`, or whose
 // eddsa-jcs-2022 proof does not verify for assertionMethod (`invalidCredential`); a signer with no active member row gets
-// `notAMember`. Re-sending the same `id` is a no-op; a different `id` replaces the stored one. With no
-// `credentialSubject.digestMultibase` the VTC stores it UNBOUND to the grant it issued: `credentialsDelivered` turns true, but
-// the membership pair stays incomplete.
+// `notAMember`. Re-sending the same `id` is a no-op; a different `id` replaces the stored one.
+//
+// Binding (the membership pair): the community issued the member a MembershipCredential at admission (the grant). The member's
+// own credential binds to it with `credentialSubject.digestMultibase` = the grant's DigestMultibase (JCS sha-256, proof
+// excluded; see vta-client `digestMultibase`), and may not outlive it (`validUntil` capped at the grant's). The VTC checks the
+// digest against the grant it stored: a match is stored BOUND and completes the pair; a mismatch is refused; NO digest is stored
+// UNBOUND (`credentialsDelivered` turns true, the pair stays incomplete). The grant reaches the member only in the
+// `credential-exchange/issue` frame the VTC pushes at approval (over TSP in this kit: tunnel mode, see `membershipGrantOf`);
+// the admin's `decideJoin` reply carries it too, but the member cannot read its own grant over REST
+// (`vtc/members/credentials/0.1` is admin only). So `memberVmc` binds when given the grant and is unbound otherwise.
 
 /** The two `@context` entries a DTG credential carries, in this order. */
 export const DTG_CONTEXTS = ["https://www.w3.org/ns/credentials/v2", "https://registry.trustoverip.org/dtg/context/v1"] as const;
@@ -179,19 +186,83 @@ export interface MemberVmcOpts {
   id?: string;
   validFrom?: Date;
   issuerScope?: "pairwise" | "directed" | "public";
+  /** The community's MembershipCredential issued to this member (see {@link membershipGrantOf}). Given: the result is bound to it. */
+  grant?: Record<string, unknown>;
 }
 
-/** The member's MembershipCredential naming the community, unsigned and with no digest (so unbound to the community's grant). */
+/** Why a grant cannot be acknowledged; each mirrors a dtg-credentials refusal (`read_membership_grant`, `check_within_grant`). */
+export type MemberVmcRefusal = "notAMembershipGrant" | "alreadyAnAcknowledgement" | "notTheGrantSubject" | "notTheCommunity" | "grantScope" | "grantExpired";
+
+export class MemberVmcNotPossible extends Error {
+  constructor(readonly reason: MemberVmcRefusal) {
+    super(`the community's membership credential cannot be acknowledged (${reason})`);
+    this.name = "MemberVmcNotPossible";
+  }
+}
+
+const issuerOf = (vc: Record<string, unknown>): string | undefined => {
+  const i = vc.issuer;
+  if (typeof i === "string") return i || undefined;
+  const id = i && typeof i === "object" ? (i as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id ? id : undefined;
+};
+
+/** Refuses what dtg-credentials refuses: not a community MembershipCredential about this member, an acknowledgement already, not `public`, or past its end. */
+function checkGrant(grant: Record<string, unknown>, memberDid: string, communityDid: string, now: number): number | undefined {
+  const types = Array.isArray(grant.type) ? grant.type : [];
+  const subject = grant.credentialSubject as Record<string, unknown> | undefined;
+  if (!types.includes("MembershipCredential") || !subject || typeof subject !== "object" || Array.isArray(subject)) throw new MemberVmcNotPossible("notAMembershipGrant");
+  if ("digestMultibase" in subject || "digest" in subject) throw new MemberVmcNotPossible("alreadyAnAcknowledgement");
+  if (subject.id !== memberDid) throw new MemberVmcNotPossible("notTheGrantSubject");
+  if (issuerOf(grant) !== communityDid) throw new MemberVmcNotPossible("notTheCommunity");
+  if (grant.issuerScope !== "public") throw new MemberVmcNotPossible("grantScope");
+  const until = typeof grant.validUntil === "string" ? Date.parse(grant.validUntil) : NaN;
+  if (Number.isFinite(until) && until <= now) throw new MemberVmcNotPossible("grantExpired");
+  return Number.isFinite(until) ? until : undefined;
+}
+
+/**
+ * The member's MembershipCredential naming the community, unsigned. With `grant`: bound to it (`digestMultibase`) and no longer
+ * valid than it, or {@link MemberVmcNotPossible}. Without: no digest, so the VTC stores it unbound to the community's grant.
+ */
 export function memberVmc(o: MemberVmcOpts): Record<string, unknown> {
+  const from = o.validFrom ?? new Date();
+  const until = o.grant ? checkGrant(o.grant, o.memberDid, o.communityDid, from.getTime()) : undefined;
   return {
     "@context": [...DTG_CONTEXTS],
     type: ["VerifiableCredential", "DTGCredential", "MembershipCredential"],
     id: o.id ?? `urn:uuid:${globalThis.crypto.randomUUID()}`,
     issuer: o.memberDid,
     issuerScope: o.issuerScope ?? "directed",
-    validFrom: rfc3339(o.validFrom ?? new Date()),
-    credentialSubject: { id: o.communityDid },
+    validFrom: rfc3339(from),
+    // An acknowledgement may not outlive what it acknowledges (dtg-credentials check_within_grant, whole seconds).
+    ...(until !== undefined ? { validUntil: rfc3339(new Date(Math.floor(until / 1000) * 1000)) } : {}),
+    credentialSubject: o.grant ? { id: o.communityDid, digestMultibase: digestMultibase(o.grant) } : { id: o.communityDid },
   };
+}
+
+/** Whether a member credential carries a grant digest (so the VTC checks it and, on a match, stores it bound). */
+export const isBound = (vc: Record<string, unknown>): boolean =>
+  typeof (vc.credentialSubject as { digestMultibase?: unknown } | undefined)?.digestMultibase === "string";
+
+/**
+ * The community's MembershipCredential (the grant) in a `credential-exchange/issue/0.1` document the VTC pushed, when it is
+ * one about `memberDid` issued by `communityDid`; otherwise undefined (the role credential, another member's, another
+ * community's). The VTC wraps it as `payload.credential_response.credential` (vtc-service credentials/delivery.rs). The frame's
+ * TSP sender was already checked to be the VTC; the grant's own proof is not verified here: the VTC compares the digest with
+ * the grant it stored, so a wrong grant is refused there, not stored.
+ */
+export function membershipGrantOf(issueDocument: unknown, memberDid: string, communityDid: string): Record<string, unknown> | undefined {
+  const doc = issueDocument as { type?: unknown; payload?: { credential_response?: { credential?: unknown } } } | null;
+  if (!doc || typeof doc !== "object" || typeof doc.type !== "string" || !doc.type.startsWith(`${TT}/credential-exchange/issue/0.1`)) return undefined;
+  const vc = doc.payload?.credential_response?.credential;
+  if (!vc || typeof vc !== "object" || Array.isArray(vc)) return undefined;
+  try {
+    checkGrant(vc as Record<string, unknown>, memberDid, communityDid, Number.NEGATIVE_INFINITY);
+    return vc as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Sign a credential as `signer` (eddsa-jcs-2022, assertionMethod: a credential is an assertion; the Trust Task that carries it is signed for authentication). */
@@ -461,11 +532,14 @@ export class VtcClient {
   /**
    * Send the signer's own MembershipCredential back to the community (`vtc/members/vmc/0.1`): built by {@link memberVmc},
    * signed by this client's signer, carried as `{ vc }` (plus `requestId` when given: it must name this member's APPROVED
-   * join request, or the whole delivery is refused). It carries no digest, so the VTC stores it unbound to the grant: the
-   * join status's `credentialsDelivered` turns true while the membership pair stays incomplete. Plain REST, like every call.
+   * join request, or the whole delivery is refused). With `grant` (the community's MembershipCredential from the
+   * `credential-exchange/issue` frame, {@link membershipGrantOf}) it is bound to it, and the VTC stores it bound (the pair is
+   * complete) or refuses a mismatch; a grant that cannot be acknowledged throws {@link MemberVmcNotPossible} before anything is
+   * sent. Without `grant` it carries no digest, so the VTC stores it unbound: the join status's `credentialsDelivered` turns
+   * true while the membership pair stays incomplete. Plain REST, like every call.
    */
-  sendMembershipCredential(opts: { id?: string; validFrom?: Date; requestId?: string } = {}): Promise<MemberVmcReceipt> {
-    const vc = signCredential(memberVmc({ memberDid: this.me.did, communityDid: this.vtcDid, id: opts.id, validFrom: opts.validFrom }), this.me.signer);
+  async sendMembershipCredential(opts: { id?: string; validFrom?: Date; requestId?: string; grant?: Record<string, unknown> } = {}): Promise<MemberVmcReceipt> {
+    const vc = signCredential(memberVmc({ memberDid: this.me.did, communityDid: this.vtcDid, id: opts.id, validFrom: opts.validFrom, grant: opts.grant }), this.me.signer);
     return this.call<MemberVmcReceipt>(VTC_TASK.membersVmc, { vc, ...(opts.requestId ? { requestId: opts.requestId } : {}) });
   }
 

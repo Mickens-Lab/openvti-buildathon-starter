@@ -8,3 +8,4 @@ export * from "./purpose.js";
 export * from "./reply-proof.js";
 export * from "./cors.js";
 export * from "./fetch-hint.js";
+export * from "./digest.js";

@@ -4,7 +4,8 @@ import { describeError } from "../client.ts";
 import { builtApplicant, deliveryNote, runMode } from "../delivery.ts";
 import { didPeerFits } from "@buildathon/tsp-client";
 import { formatDate, formatDateTime, stripDids } from "../format.ts";
-import { useLoad } from "../hooks.ts";
+import { useLoad, useStore } from "../hooks.ts";
+import { membershipGrant, noGrantReason, sendBackConfirm } from "../grant.ts";
 import { ANON_COOLDOWN_MS } from "../refresh.ts";
 import type { Actions } from "./screens.tsx";
 import { CodeBlock, Confirm, ErrorNote, Fresh, KV, Loading, Tag, toast } from "./ui.tsx";
@@ -39,7 +40,10 @@ export function MemberScreen({ actions, communityName, delivered }: { actions: A
 
 function MembershipCard({ actions, communityName, delivered }: { actions: Actions; communityName: string; delivered?: boolean }) {
   const who = builtApplicant(didPeerFits);
-  const note = deliveryNote(runMode(), delivered, who.kind);
+  const mode = runMode();
+  const grant = useStore(membershipGrant);
+  const [sentBound, setSentBound] = useState<boolean>();
+  const note = deliveryNote(mode, delivered, who.kind, sentBound);
   // The portal sign-in is plain REST (challenge, auth, me): the VTC rate-limits it like an anonymous caller (burst 10, then one
   // per 5 s per address), so it costs three of those tokens. Global refreshes therefore skip it; this card has its own Refresh.
   const me = useLoad<PortalMe>("proof", (c) => c.memberProof(), true, "member/me", false);
@@ -62,12 +66,18 @@ function MembershipCard({ actions, communityName, delivered }: { actions: Action
         your own membership credential sent back to it (<code>vtc/members/vmc/0.1</code>). Credentials the community pushes to you
         (the frames) do not change it.
       </p>
+      <p className="small-text muted" data-testid="grant-state">
+        {grant
+          ? <>The community's membership credential to you (the grant) arrived in a credential frame, so the credential you send back is bound to it (its digest, and no later expiry).</>
+          : <>{noGrantReason(mode)} So the credential you send back is unbound to it.</>}
+      </p>
       <Confirm label="Send my membership credential back" busy={actions.busy}
-        confirmText="This signs a membership credential with your app key, naming this community as its subject, and sends it to the community, which stores it. It carries no digest of the credential the community issued to you, so the community stores it unbound to that grant and records your membership pair as incomplete. Continue?"
+        confirmText={sendBackConfirm(!!grant, mode)}
         onConfirm={() => void (async () => {
           setReceipt(undefined);
-          const r = await actions.run((c) => c.sendMembershipCredential(), (x) => `The community answered "${x?.status ?? "(no status)"}" for your membership credential.`);
-          if (r) setReceipt(r);
+          const bound = !!grant;
+          const r = await actions.run((c) => c.sendMembershipCredential(grant ? { grant } : {}), (x) => `The community answered "${x?.status ?? "(no status)"}" for your ${bound ? "bound" : "unbound"} membership credential.`);
+          if (r) { setReceipt(r); setSentBound(bound); }
         })()} />
       {receipt && (
         <div className="proof" data-testid="vmc-receipt">

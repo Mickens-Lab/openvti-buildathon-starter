@@ -4,6 +4,8 @@ import { connectTsp, didPeerFits, frameOf, type Frame, type PeerIdentity, type T
 import { builtApplicant } from "./delivery.ts";
 import { getClient, identity } from "./client.ts";
 import { CONNECT_TIMEOUT_MS, ConnectTimeout } from "./frames.ts";
+import { membershipGrantOf } from "@buildathon/vtc-client";
+import { membershipGrant } from "./grant.ts";
 
 export interface ListenHandlers {
   onFrame(f: Frame): void;
@@ -31,7 +33,12 @@ export const startListener: StartListener = async (h, opts) => {
     clearTimeout(timer);
   }
   c.conn.onInboundTsp(async (bytes) => {
-    try { h.onFrame(frameOf(await c.session.open(bytes))); } catch (e) { h.onFrame({ unreadable: (e as Error).message }); }
+    try {
+      const f = frameOf(await c.session.open(bytes)); // opens only a frame from `peer` (the VTC), so the grant is the VTC's
+      const grant = "document" in f ? membershipGrantOf(f.document, me.did, peer) : undefined;
+      if (grant) membershipGrant.set(grant);
+      h.onFrame(f);
+    } catch (e) { h.onFrame({ unreadable: (e as Error).message }); }
   });
   if (opts.relate) {
     c.session.relate(5000).then(() => h.onNote("relationship accepted by the VTC"), (e) => h.onNote(`no accept from the VTC: ${(e as Error).message}`));

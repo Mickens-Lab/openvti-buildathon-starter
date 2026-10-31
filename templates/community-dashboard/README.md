@@ -115,8 +115,11 @@ run unless marked):
 - **Credential delivery.** The card shows the join status's `credentialsDelivered` and says what it means: true only when the
   community holds your own membership credential sent back (`vtc/members/vmc/0.1`); pushed frames do not change it.
   *Send my membership credential back* (after a confirm) signs a `MembershipCredential` as the applicant (`did:key` or
-  `did:peer:2`), naming the community as subject, and sends it over REST (every mode). It carries no digest of the community's
-  grant, so the community stores it unbound and records the membership pair as incomplete. The page shows the community's receipt
+  `did:peer:2`), naming the community as subject, and sends it over REST (every mode). When the "Credential frames" panel received
+  the community's own membership credential (the grant, in the `credential-exchange/issue` frame; tunnel mode, listening before
+  approval) it is bound to it (`digestMultibase`, `validUntil` capped) and the community stores it bound, completing the pair;
+  otherwise it carries no digest, and the community stores it unbound and records the pair as incomplete. The card says which, and
+  why. The grant is kept in memory only (src/grant.ts). The page shows the community's receipt
   as sent and re-reads the status; refusals (`subjectMismatch`, `notAMember`, `invalidCredential`) are explained in words. No
   `requestId` is sent (see the local hint below: the page cannot be sure which approved request is current). Component-tested;
   verified live 2026-10-30 (one machine, one run) (receipt `stored`, then "reciprocal credential held", as a did:key and as a did:peer:2).
