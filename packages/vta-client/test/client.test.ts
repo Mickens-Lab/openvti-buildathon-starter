@@ -88,17 +88,37 @@ test("authenticate runs challenge then authenticate and sends the bearer afterwa
   assert.equal(seen[2].headers.authorization, "Bearer tok");
 });
 
-test("error responses raise TrustTaskError; 'already exists' is idempotent", async () => {
+const ERR = "https://trusttasks.org/spec/trust-task-error/0.5";
+const refuse = (doc: any, payload: Record<string, unknown>, status = 422) =>
+  new Response(JSON.stringify({ type: ERR, threadId: doc.id, payload }), { status });
+
+test("error responses raise TrustTaskError; an existing resource (taskFailed + reason conflict) is idempotent", async () => {
   const c = await VtaClient.connect(
     "http://vta",
     newIdentity(),
-    fakeVta((doc) => {
-      const err = doc.type === TASK.contextsCreate ? "context already exists" : "permissionDenied";
-      return new Response(JSON.stringify({ type: "trust-task-error", payload: { message: err } }), { status: 400 });
-    }),
+    fakeVta((doc) =>
+      doc.type === TASK.contextsCreate
+        ? refuse(doc, { code: "taskFailed", message: "context already exists: demo", details: { reason: "conflict" } })
+        : refuse(doc, { code: "permissionDenied", message: "no" }, 403),
+    ),
   );
   assert.equal(await c.createContext("demo"), false);
-  await assert.rejects(c.grantAcl("did:key:z6Mkx", "demo"), TrustTaskError);
+  const e = await c.grantAcl("did:key:z6Mkx", "demo").catch((x) => x);
+  assert.ok(e instanceof TrustTaskError);
+  assert.equal(e.code, "permissionDenied");
+});
+
+test("idempotent() keys off the code: idConflict and messages that say 'already' are NOT 'already exists'", async () => {
+  for (const payload of [
+    { code: "idConflict", message: "id reused with different content" },
+    { code: "taskFailed", message: "context already exists", details: { reason: "not_found" } },
+    { code: "permissionDenied", message: "already revoked; conflict; does not exist" },
+  ]) {
+    const c = await VtaClient.connect("http://vta", newIdentity(), fakeVta((doc) => refuse(doc, payload)));
+    await assert.rejects(c.createContext("demo"), TrustTaskError, JSON.stringify(payload));
+  }
+  const ext = await VtaClient.connect("http://vta", newIdentity(), fakeVta((doc) => refuse(doc, { code: "vta/contexts/create:alreadyExists" })));
+  assert.equal(await ext.createContext("demo"), false);
 });
 
 test("grantHandoff sends an admin entry with the one-time hand-off marker and an expiry", async () => {

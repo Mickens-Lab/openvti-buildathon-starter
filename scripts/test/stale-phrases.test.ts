@@ -22,6 +22,23 @@ test("'nothing sends the member credential back' is stale now that the dashboard
   assert.deepEqual(staleHits("The pushed frames do not set it; the dashboard's Send my membership credential back does."), []);
 });
 
+test("the member credential is no longer described as always unbound", () => {
+  assert.equal(staleHits("`credentialsDelivered` stays `false` because nothing sends the member's own credential back").length, 1);
+  assert.equal(staleHits("The frame's type is all this page reads: the credential inside is not parsed or verified here.").length, 1);
+  assert.equal(staleHits("Binding it would need the grant, which the kit could only get by renewing the membership").length, 1);
+  assert.equal(staleHits("The credential is always unbound.").length, 1);
+  assert.deepEqual(staleHits("Without the grant it carries no digest, so the community stores it unbound."), []);
+});
+
+test("Trust Task terminology and transport claims that are no longer true", () => {
+  assert.equal(staleHits("This starter uses **REST over HTTP** only: signed documents POSTed as JSON.").length, 1);
+  assert.equal(staleHits("Body: a signed envelope.").length, 1);
+  assert.equal(staleHits("## The envelope").length, 1);
+  assert.equal(staleHits("`callWithRetry` above calls `vta.call` again").length, 1);
+  assert.deepEqual(staleHits("The binding puts one Trust Task document in an **envelope** `{type, document}`."), []);
+  assert.deepEqual(staleHits("Body: a signed Trust Task document."), []);
+});
+
 test("reports the line number", () => {
   assert.match(staleHits("ok\nnobody should build\n", true)[0], /^line 2:/);
 });

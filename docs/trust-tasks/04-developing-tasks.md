@@ -77,7 +77,7 @@ Unknown extended codes degrade to `taskFailed` for clients that do not know them
 ### Valid and invalid examples
 
 Valid examples are the complete documents in `spec.md`; the build validates every fenced JSON document in a spec against
-the framework envelope. `payload.invalid-examples.json` is an array of `{ "note", "payload", "variant"? }`; `variant`
+the framework document. `payload.invalid-examples.json` is an array of `{ "note", "payload", "variant"? }`; `variant`
 is `"response"` to test the response schema. **`npm run validate` does not read it** (shown below **[run]**); upstream
 `trust-tasks-codegen` turns it into a `rejects_invalid_examples` test **[src]**. Test it yourself (below).
 

@@ -68,6 +68,23 @@ console.log(served.length, aclTasks);
 Compare with the registry: a task in the registry but not served is not available on that deployment, whatever the
 spec says. This mismatch is the usual cause of `unsupportedType`/`unsupportedVersion` ([06](06-troubleshooting-and-glossary.md)).
 
+## Versions this starter sends, and why
+
+Each client pins the version the pinned VTA/VTC answers (the kit's live runs), not the newest in the registry. Several
+are already superseded; a superseded version is deprecated and withdrawn later (SPEC 5.3.2-5.3.3), so check
+discovery before you build on one **[src]** `packages/*/src`:
+
+| Task | Sent | Newest in the registry | Note |
+|---|---|---|---|
+| `trust-task-discovery` | 0.1 | 0.3 | 0.3 adds `requiredExt` and windows; the VTC answers 0.3 too |
+| `acl/grant` | 0.1 | 0.2 | |
+| `task-consent/decision` | 0.1 | 0.2 | the decision payload is the same shape for the kit's use |
+| `messaging/ping` | 0.1 | 0.2 | TSP ping only |
+| `trust-task-error` (received) | 0.5 from the VTA | 0.6 | the clients accept any `trust-task-error/<v>` |
+| `vtc/join-requests/manifest` | 0.4, then 0.3 | 0.4 | steps down only on `unsupportedVersion`/`unsupportedType` |
+
+The version comparison rules are in [01](01-concepts.md); a newer MINOR is not automatically accepted by an older consumer.
+
 ## Reading a spec in two minutes
 
 Open `spec.md` (or the Type URI) and read in this order:

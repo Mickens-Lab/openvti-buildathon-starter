@@ -27,6 +27,20 @@ test("the notes point at the send-back action, and the delivered note does not c
   assert.doesNotMatch(ok, /which this page does not send/);
 });
 
+test("the held note says bound/complete only when this page sent a bound credential, unbound/incomplete only when it sent an unbound one", () => {
+  const bound = deliveryNote("tunnel", true, "did:peer", true);
+  assert.equal(bound.label, "bound credential held");
+  assert.match(bound.detail, /digest of the community's grant/);
+  assert.match(bound.detail, /pair is complete/);
+  assert.doesNotMatch(bound.detail, /unbound|incomplete/);
+  const unbound = deliveryNote("local", true, "did:key", false);
+  assert.equal(unbound.label, "reciprocal credential held");
+  assert.match(unbound.detail, /carries no digest/);
+  assert.match(unbound.detail, /incomplete/);
+  assert.doesNotMatch(unbound.detail, /pair is complete/);
+  assert.doesNotMatch(deliveryNote("tunnel", true).detail, /pair is complete/, "unknown: never claims bound");
+});
+
 test("a did:peer applicant in tunnel mode is told to run the listener, not that delivery is impossible", () => {
   const n = deliveryNote("tunnel", false, "did:peer");
   assert.equal(n.label, "pushed over TSP; flag stays false");

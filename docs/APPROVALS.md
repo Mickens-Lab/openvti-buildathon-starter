@@ -13,7 +13,8 @@ An approval *rule* says "task type X needs consent from approver set S". Then:
 1. The requester submits X. The VTA does not run it; it refuses with `auth:consent_required` and a **challenge**, and signs a
    `task-consent/request` for each approver in the set **[verified]**.
 2. The requester shows a six-character **match code**: the first six hex characters of the bytes of the request's payload digest **[verified]**.
-3. The approver verifies the request (signed by the VTA, addressed to it, not expired), compares the code on both screens, and returns a
+3. The approver verifies the request (signed by the VTA with a key its verified did:webvh log lists under `authentication`,
+   addressed to it, not expired; see [SECURITY.md](SECURITY.md#whose-did-is-this-trust-in-didjsonl)), compares the code on both screens, and returns a
    signed `task-consent/decision` **[verified]**.
 4. The requester submits the *identical* task again; the VTA runs it once and spends the approval **[verified]**.
 
@@ -51,7 +52,8 @@ last 15 minutes and an approval 10 **[docs]**.
   generated `config.toml` and refuses to start if enforcement did not switch on.
 - **Over REST an approver needs a session**, and a DID with no ACL entry cannot open one (401, then "authentication failed") **[verified]**. The
   docs say an approver needs no ACL entry; that holds for the messaging transports **[docs]**. The demo therefore grants the approver a `monitor` entry
-  with no contexts. In `MODE=tunnel` the VTA also pushes the request to the approver over messaging, which this kit cannot receive ([MESSAGING.md](MESSAGING.md)).
+  with no contexts. Over messaging the sealed sender is the caller and the decision's `issuer` must equal it; there is no session
+  ([REST bearer vs messaging sender](trust-tasks/01-concepts.md#who-is-the-caller-rest-bearer-vs-messaging-sender)). In `MODE=tunnel` the VTA also pushes the request to the approver over messaging, which this kit cannot receive ([MESSAGING.md](MESSAGING.md)).
 - **No effects are shown.** The VTA's request carried an empty `effects` list for this task **[verified]**, so the approver says "NOT DETERMINED", never "no effects".
 - **There is no "is it approved yet?" call.** The requester asks again by submitting again; while pending the VTA repeats the same challenge **[verified]**.
 - `npm run reset` deletes `.vta/` including the approver key; run `approvals:setup` again afterwards.

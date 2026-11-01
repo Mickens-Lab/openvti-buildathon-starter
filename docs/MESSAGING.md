@@ -21,7 +21,10 @@ a TSP relationship, and send a signed `messaging/ping/0.1` in the TSP binding en
 **Verified live (`MODE=tunnel`, pinned images including mediator 0.45.0, 2026-10-30, two separate bring-ups):**
 - **The pong.** `npm run tsp:ping` (Node) and `npm run tsp:ping:browser` (the `templates/tsp-ping` page in headless Chromium) each end in `pong from the VTA ... status ok, protocols [tsp, didcomm, rest], nonce echoed`
   after the relationship invite was accepted **[verified]**. `npm run tunnel:probe` (and so `npm run up`) now includes the same ping as a row **[verified]**. The pong is the VTA's answer to a signed
-  `messaging/ping/0.1`, routed client -> mediator -> VTA and back, all TSP 1.0.
+  `messaging/ping/0.1`, routed client -> mediator -> VTA and back, all TSP 1.0. The client checks the pong by its `type`, its
+  `threadId` (the ping's `id`) and its in-band `issuer`/`recipient`: the VTA (0.65.0) sends both, `issuer` exactly the VTA's DID (no
+  fragment) and `recipient` exactly the pinger's DID, and signs the pong for `authentication` with the VTA's `#key-0` **[verified
+  2026-10-31, one machine, one run]**.
 - **Credential push to a `did:key`.** With `npm run tsp:listen` running as the app's `did:key` (`VTC_APPLICANT=did:key`; the tunnel default is the `did:peer:2` [below](#tunnel-mode-delivers-the-credential-to-the-applicant)), `npm run vtc:join` plus `npm run vtc:approve` made the VTC send two `credential-exchange/issue/0.1` frames to that
   DID through the mediator; the listener received and opened both, and the VTC logged `trust-task push delivered ... via=tsp` **[verified]**. The listener must have spoken TSP to the VTC first
   (it forms the relationship; the VTC learns the route from the inbound invite). Not checked: that a wallet could accept and store the credential, or what the frames contain beyond their type.
@@ -117,13 +120,34 @@ member's **own** membership credential, sent back to the community (`vtc/members
 
 The community dashboard can send that credential back: the membership card's **Send my membership credential back** (after a confirm)
 signs a DTG `MembershipCredential` as the member (issuer: the applicant `did:key` or `did:peer:2`; subject: the community's DID;
-`issuerScope: directed`; an `eddsa-jcs-2022` proof for `assertionMethod`, the same proof the kit puts on every Trust Task) and sends
-`{ vc }` to `vtc/members/vmc/0.1` over REST, so it works in every mode (`local` too: no messaging is involved). It carries **no**
-`digestMultibase` of the community's grant, so the VTC stores it **unbound**: `credentialsDelivered` turns `true`, but the membership
-pair stays incomplete (the VTC logs a warning). Binding it would need the grant, which the kit could only get by renewing the membership
-(that replaces the grant), so the page does not. It sends no `requestId` either: the page cannot be sure which approved request is the
-current membership's, and a wrong one makes the VTC refuse the whole delivery. `VtcClient.sendMembershipCredential()` does the same from
-Node. Read from the VTC source and unit-tested (shape, proof for both identities, the call, the UI flow); the dashboard's button is **verified live 2026-10-30 (one machine, one run)** for both identities (receipt `stored`, `credentialsDelivered=true`, the VTC logs `stored member-issued VMC` with the unbound-digest warning).
+`issuerScope: directed`; an `eddsa-jcs-2022` proof for `assertionMethod`, as a credential is an assertion; the Trust Task carrying it is signed for `authentication`) and sends
+`{ vc }` to `vtc/members/vmc/0.1` over REST, so the call works in every mode (`local` too).
+
+**Bound or unbound.** The member's credential completes the membership pair only when it is *bound* to the community's own
+`MembershipCredential` to the member (the grant): `credentialSubject.digestMultibase` is the grant's DigestMultibase (base58btc
+multibase of a sha2-256 multihash over the JCS form of the grant without its `proof`, as dtg-credentials computes it; the kit's
+`digestMultibase()` matches that library's known answer), and its `validUntil` is capped at the grant's, as mobile wallets do. The VTC
+checks the digest against the grant it stored: a match is stored bound (pair complete), a mismatch is refused, and **no** digest is stored
+**unbound** (`credentialsDelivered` turns `true`, the pair stays incomplete, the VTC logs a warning). The member gets the grant only in
+the `credential-exchange/issue` frame the VTC pushes at approval (`payload.credential_response.credential`): it cannot read its own
+grant over REST (`vtc/members/credentials/0.1` is admin only; the admin's `decide` reply carries it, but that is the admin's, not the
+member's). So:
+
+- **Tunnel mode, frames panel listening before approval:** the page keeps the grant from the issue frame (in memory; a reload forgets
+  it), says so on the card, and sends a **bound** credential (`VtcClient.sendMembershipCredential({ grant })`; `membershipGrantOf()`
+  picks the grant out of an issue document; a grant that is not this member's, not the community's, not `public` or expired is refused
+  before anything is sent). The card then says the pair is complete.
+- **Otherwise** (local mode: no messaging; tunnel mode with no frame received; farm): it sends an **unbound** one, and the card and the
+  confirm say why.
+
+It sends no `requestId`: the page cannot be sure which approved request is the current membership's, and a wrong one makes the VTC
+refuse the whole delivery. `VtcClient.sendMembershipCredential()` does the same from Node. The unbound send is **verified live
+2026-10-30 (one machine, one run)** for both identities (receipt `stored`, `credentialsDelivered=true`, the VTC logs `stored
+member-issued VMC` with the unbound-digest warning). The bound send is **verified live 2026-10-31 (tunnel mode, did:peer:2, one
+machine, one run)**: the card said the grant arrived, the community answered `stored`, the row turned to "bound credential held",
+the VTC logged `stored member-issued VMC` with no unverified-digest warning, and the admin's `vtc/members/credentials/0.1` read
+`memberVmcBound: true`. A frame left over from an earlier membership can arrive when the listener starts; the page keeps the latest
+grant, and the bound credential matched the grant issued at the new approval.
 
 ## The rest of the gap: no DIDComm client, no wallet-side delivery
 
@@ -132,11 +156,23 @@ The TSP client above is the only messaging client in the kit. Nothing in the pin
 | Idea | Why it is not here | What it needs |
 |---|---|---|
 | **A DIDComm "send a Trust Task" example** (for example the inbox verifier over messaging) | no DIDComm client (TSP: see above) | a client that resolves DIDs, packs and unpacks DIDComm v2 (authenticated encryption), authenticates to the mediator, and polls or listens (and, for TSP, its own framing). A substantial project of its own; use an existing library rather than writing one |
-| **Credential delivery to the member's app** | the frames do arrive at a TSP listener (above), but nothing in the kit parses the credential, verifies it or stores it; in `MODE=tunnel` the applicant is a `did:peer:2` that names the mediator, so the frames reach it with no earlier contact ([above](#tunnel-mode-delivers-the-credential-to-the-applicant)); in `local` there is no mediator, and the applicant is a plain `did:key`; `credentialsDelivered` stays `false` because nothing sends the member's own credential back | a client that unpacks, verifies and stores the credential, and sends its own membership credential back. A mobile wallet is such a client ([MOBILE-WALLET.md](MOBILE-WALLET.md)); it was not tried |
+| **Credential delivery to the member's app** | the frames do arrive at a TSP listener (above); the dashboard keeps the membership grant from them in memory only to bind its send-back ([above](#what-credentialsdelivered-means)), but nothing in the kit verifies the credential's proof or stores it durably; in `MODE=tunnel` the applicant is a `did:peer:2` that names the mediator, so the frames reach it with no earlier contact ([above](#tunnel-mode-delivers-the-credential-to-the-applicant)); in `local` there is no mediator, and the applicant is a plain `did:key` | a client that unpacks, verifies and stores the credential, and sends its own membership credential back bound to it. A mobile wallet is such a client ([MOBILE-WALLET.md](MOBILE-WALLET.md)); it was not tried |
 | **A DIDComm round-trip check** | TSP has one (above). For DIDComm there is no client | a DIDComm client |
 
 What the kit shows for credentials: the community dashboard's membership card says, per mode, why delivery to the app is not confirmed instead of showing a bare `false`, and the admin's
 approval response (`npm run vtc:approve`) is where a CLI-driven flow sees the credential; `npm run tsp:listen` shows the push frames arrive.
+
+## Notes for anyone extending the TSP client
+
+- **Ping version.** The kit sends `messaging/ping/0.1`, the version the pinned VTA was checked against; `0.2` exists in
+  the registry and in `@openvtc/trust-tasks` 0.28.1 but was not tried against the pinned VTA.
+- **A restarted VTA forgets the relationship.** The client invites once per session; after a VTA restart, open a new
+  session (invite again) or requests go unanswered.
+- **Replies are checked by `type`.** A `trust-task-error` reply surfaces its code; an in-band `issuer`/`recipient` that
+  differs from the TSP peer/own VID is refused (`checkPingReply`).
+- **DIDComm clients** (not in this kit) carry the same document as the body of a
+  `https://trusttasks.org/binding/didcomm/0.1/envelope` message; the authenticated sender must equal the document's
+  `issuer`. See [the transport table](trust-tasks/01-concepts.md#who-is-the-caller-rest-bearer-vs-messaging-sender).
 
 ## Building it yourself
 

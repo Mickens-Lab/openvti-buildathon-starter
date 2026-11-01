@@ -134,7 +134,7 @@ export function vtcUrl(): string {
   return u.replace(/\/+$/, "");
 }
 
-/** One line for a Trust Task refusal: `code: message`, not the whole signed error envelope. */
+/** One line for a Trust Task refusal: `code: message`, not the whole signed error document. */
 export function refusal(body: unknown): string {
   const p = (body as any)?.payload;
   return p?.code ? `${p.code}${p.message ? ` - ${p.message}` : ""}` : JSON.stringify(body);

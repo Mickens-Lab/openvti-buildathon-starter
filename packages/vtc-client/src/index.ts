@@ -11,9 +11,12 @@
 //  - An applicant is not a member yet, so it cannot `authenticate`. It reads
 //    the manifest (public), submits, and polls status, all as signed documents.
 import { signTrustTask } from "@openvtc/trust-tasks-proof";
-import { TASK as VTA_TASK, TT, TrustTaskError, emitTrace, fetchVtaDid, siopIdToken, type Identity } from "@buildathon/vta-client";
+import {
+  TASK as VTA_TASK, TT, TrustTaskError, classifyReply, emitTrace, fetchVtaDid, isUnsupportedVersion, purposeFor, refusalCode, replyCode, rfc3339, servedVersions,
+  siopIdToken, unwrapReply, checkReplyProof, fetchDidDocument, digestMultibase, type Identity, type Reply, type ReplyKind, type ReplyProof,
+} from "@buildathon/vta-client";
 
-export { TrustTaskError };
+export { TrustTaskError, TrustTaskPending, refusalCode } from "@buildathon/vta-client";
 
 export const VTC_TASK = {
   challenge: VTA_TASK.challenge,
@@ -69,6 +72,16 @@ export const VTC_TASK = {
 } as const;
 
 export const DEFAULT_VTC_URL = "http://localhost:8200";
+
+/**
+ * Whether a refusal lets a client step down to `version`: the code must be `unsupportedVersion` or `unsupportedType`
+ * (never a match on the message), and when the consumer listed `details.servedVersions`, `version` must be in it.
+ */
+export function versionStepAllowed(body: unknown, version: string): boolean {
+  if (!isUnsupportedVersion(body)) return false;
+  const served = servedVersions(body);
+  return served === undefined || served.includes(version);
+}
 
 export interface JoinCriterion {
   id: string;
@@ -136,12 +149,12 @@ export interface CallEvent {
   payload: Record<string, unknown>;
   /** The full signed document as POSTed. Absent for REST calls. */
   request?: unknown;
-}
-
-/** The refusal code carried by an error body, e.g. `...:notFound`, or undefined. */
-export function refusalCode(body: unknown): string | undefined {
-  const c = (body as any)?.payload?.code ?? (body as any)?.code;
-  return typeof c === "string" ? c : undefined;
+  /** How the reply was classified (SPEC 4.4.1, plus the HTTPS binding's empty 202/204). Absent for REST calls. */
+  kind?: ReplyKind;
+  /** The reply named another exchange in `threadId` (reported, not refused: SPEC 4.9). */
+  threadMismatch?: boolean;
+  /** The reply document's own proof, checked against the VTC's DID document. Reported, never refused. */
+  replyProof?: ReplyProof;
 }
 
 // --- the member's own membership credential (vtc/members/vmc/0.1) ------------------------------
@@ -150,9 +163,16 @@ export function refusalCode(body: unknown): string | undefined {
 // the proof signer, whose `credentialSubject.id` is not the community's DID (`subjectMismatch`), that is not a DTG
 // MembershipCredential under the v2 + DTG contexts declaring an `issuerScope`, that has no top-level `id`, or whose
 // eddsa-jcs-2022 proof does not verify for assertionMethod (`invalidCredential`); a signer with no active member row gets
-// `notAMember`. Re-sending the same `id` is a no-op; a different `id` replaces the stored one. With no
-// `credentialSubject.digestMultibase` the VTC stores it UNBOUND to the grant it issued: `credentialsDelivered` turns true, but
-// the membership pair stays incomplete.
+// `notAMember`. Re-sending the same `id` is a no-op; a different `id` replaces the stored one.
+//
+// Binding (the membership pair): the community issued the member a MembershipCredential at admission (the grant). The member's
+// own credential binds to it with `credentialSubject.digestMultibase` = the grant's DigestMultibase (JCS sha-256, proof
+// excluded; see vta-client `digestMultibase`), and may not outlive it (`validUntil` capped at the grant's). The VTC checks the
+// digest against the grant it stored: a match is stored BOUND and completes the pair; a mismatch is refused; NO digest is stored
+// UNBOUND (`credentialsDelivered` turns true, the pair stays incomplete). The grant reaches the member only in the
+// `credential-exchange/issue` frame the VTC pushes at approval (over TSP in this kit: tunnel mode, see `membershipGrantOf`);
+// the admin's `decideJoin` reply carries it too, but the member cannot read its own grant over REST
+// (`vtc/members/credentials/0.1` is admin only). So `memberVmc` binds when given the grant and is unbound otherwise.
 
 /** The two `@context` entries a DTG credential carries, in this order. */
 export const DTG_CONTEXTS = ["https://www.w3.org/ns/credentials/v2", "https://registry.trustoverip.org/dtg/context/v1"] as const;
@@ -166,27 +186,88 @@ export interface MemberVmcOpts {
   id?: string;
   validFrom?: Date;
   issuerScope?: "pairwise" | "directed" | "public";
+  /** The community's MembershipCredential issued to this member (see {@link membershipGrantOf}). Given: the result is bound to it. */
+  grant?: Record<string, unknown>;
 }
 
-/** RFC 3339, UTC, no fraction when it is all zeros (the form the Rust side writes). */
-const rfc3339 = (d: Date) => d.toISOString().replace(/\.000Z$/, "Z");
+/** Why a grant cannot be acknowledged; each mirrors a dtg-credentials refusal (`read_membership_grant`, `check_within_grant`). */
+export type MemberVmcRefusal = "notAMembershipGrant" | "alreadyAnAcknowledgement" | "notTheGrantSubject" | "notTheCommunity" | "grantScope" | "grantExpired";
 
-/** The member's MembershipCredential naming the community, unsigned and with no digest (so unbound to the community's grant). */
+export class MemberVmcNotPossible extends Error {
+  constructor(readonly reason: MemberVmcRefusal) {
+    super(`the community's membership credential cannot be acknowledged (${reason})`);
+    this.name = "MemberVmcNotPossible";
+  }
+}
+
+const issuerOf = (vc: Record<string, unknown>): string | undefined => {
+  const i = vc.issuer;
+  if (typeof i === "string") return i || undefined;
+  const id = i && typeof i === "object" ? (i as { id?: unknown }).id : undefined;
+  return typeof id === "string" && id ? id : undefined;
+};
+
+/** Refuses what dtg-credentials refuses: not a community MembershipCredential about this member, an acknowledgement already, not `public`, or past its end. */
+function checkGrant(grant: Record<string, unknown>, memberDid: string, communityDid: string, now: number): number | undefined {
+  const types = Array.isArray(grant.type) ? grant.type : [];
+  const subject = grant.credentialSubject as Record<string, unknown> | undefined;
+  if (!types.includes("MembershipCredential") || !subject || typeof subject !== "object" || Array.isArray(subject)) throw new MemberVmcNotPossible("notAMembershipGrant");
+  if ("digestMultibase" in subject || "digest" in subject) throw new MemberVmcNotPossible("alreadyAnAcknowledgement");
+  if (subject.id !== memberDid) throw new MemberVmcNotPossible("notTheGrantSubject");
+  if (issuerOf(grant) !== communityDid) throw new MemberVmcNotPossible("notTheCommunity");
+  if (grant.issuerScope !== "public") throw new MemberVmcNotPossible("grantScope");
+  const until = typeof grant.validUntil === "string" ? Date.parse(grant.validUntil) : NaN;
+  if (Number.isFinite(until) && until <= now) throw new MemberVmcNotPossible("grantExpired");
+  return Number.isFinite(until) ? until : undefined;
+}
+
+/**
+ * The member's MembershipCredential naming the community, unsigned. With `grant`: bound to it (`digestMultibase`) and no longer
+ * valid than it, or {@link MemberVmcNotPossible}. Without: no digest, so the VTC stores it unbound to the community's grant.
+ */
 export function memberVmc(o: MemberVmcOpts): Record<string, unknown> {
+  const from = o.validFrom ?? new Date();
+  const until = o.grant ? checkGrant(o.grant, o.memberDid, o.communityDid, from.getTime()) : undefined;
   return {
     "@context": [...DTG_CONTEXTS],
     type: ["VerifiableCredential", "DTGCredential", "MembershipCredential"],
     id: o.id ?? `urn:uuid:${globalThis.crypto.randomUUID()}`,
     issuer: o.memberDid,
     issuerScope: o.issuerScope ?? "directed",
-    validFrom: rfc3339(o.validFrom ?? new Date()),
-    credentialSubject: { id: o.communityDid },
+    validFrom: rfc3339(from),
+    // An acknowledgement may not outlive what it acknowledges (dtg-credentials check_within_grant, whole seconds).
+    ...(until !== undefined ? { validUntil: rfc3339(new Date(Math.floor(until / 1000) * 1000)) } : {}),
+    credentialSubject: o.grant ? { id: o.communityDid, digestMultibase: digestMultibase(o.grant) } : { id: o.communityDid },
   };
 }
 
-/** Sign a credential as `signer` (eddsa-jcs-2022, assertionMethod): the same proof the client puts on every Trust Task. */
+/** Whether a member credential carries a grant digest (so the VTC checks it and, on a match, stores it bound). */
+export const isBound = (vc: Record<string, unknown>): boolean =>
+  typeof (vc.credentialSubject as { digestMultibase?: unknown } | undefined)?.digestMultibase === "string";
+
+/**
+ * The community's MembershipCredential (the grant) in a `credential-exchange/issue/0.1` document the VTC pushed, when it is
+ * one about `memberDid` issued by `communityDid`; otherwise undefined (the role credential, another member's, another
+ * community's). The VTC wraps it as `payload.credential_response.credential` (vtc-service credentials/delivery.rs). The frame's
+ * TSP sender was already checked to be the VTC; the grant's own proof is not verified here: the VTC compares the digest with
+ * the grant it stored, so a wrong grant is refused there, not stored.
+ */
+export function membershipGrantOf(issueDocument: unknown, memberDid: string, communityDid: string): Record<string, unknown> | undefined {
+  const doc = issueDocument as { type?: unknown; payload?: { credential_response?: { credential?: unknown } } } | null;
+  if (!doc || typeof doc !== "object" || typeof doc.type !== "string" || !doc.type.startsWith(`${TT}/credential-exchange/issue/0.1`)) return undefined;
+  const vc = doc.payload?.credential_response?.credential;
+  if (!vc || typeof vc !== "object" || Array.isArray(vc)) return undefined;
+  try {
+    checkGrant(vc as Record<string, unknown>, memberDid, communityDid, Number.NEGATIVE_INFINITY);
+    return vc as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Sign a credential as `signer` (eddsa-jcs-2022, assertionMethod: a credential is an assertion; the Trust Task that carries it is signed for authentication). */
 export function signCredential(vc: Record<string, unknown>, signer: Identity["signer"]): Record<string, unknown> {
-  return signTrustTask(vc as any, signer) as unknown as Record<string, unknown>;
+  return signTrustTask(vc as any, signer, { proofPurpose: "assertionMethod" }) as unknown as Record<string, unknown>;
 }
 
 /** The VTC's answer to `vtc/members/vmc/0.1`. `status` is `"stored"` on success. */
@@ -224,6 +305,7 @@ export class VtcClient {
   token?: string;
   /** Optional observer, called once per call after it settles (success or failure). Must not throw; errors in it are swallowed. */
   onCall?: (e: CallEvent) => void;
+  private didDoc?: Promise<any>;
 
   constructor(
     public readonly baseUrl: string,
@@ -250,25 +332,32 @@ export class VtcClient {
   private report(e: CallEvent) {
     try { this.onCall?.(e); } catch { /* an observer must never break a call */ }
     const req = e.request as { id?: string; recipient?: string } | undefined;
-    emitTrace({ ts: e.startedAt, source: "vtc", transport: "rest", type: e.type, id: req?.id, from: e.issuer, to: req?.recipient ?? this.vtcDid, status: e.status, ok: e.ok, code: e.code, ms: e.durationMs });
+    emitTrace({ ts: e.startedAt, source: "vtc", transport: "rest", type: e.type, id: req?.id, from: e.issuer, to: req?.recipient ?? this.vtcDid, status: e.status, ok: e.ok, code: e.code, ms: e.durationMs, proof: e.replyProof });
   }
 
-  /** Build, sign and POST one Trust Task document; returns the response payload. */
-  async call<R = any>(type: string, payload: Record<string, unknown> = {}): Promise<R> {
-    const doc = signTrustTask(
+  /** Build and sign one Trust Task document addressed to this VTC, without sending it. Keep it to resend the same bytes. */
+  build(type: string, payload: Record<string, unknown> = {}, opts: { threadId?: string } = {}): Record<string, unknown> {
+    return signTrustTask(
       {
         id: globalThis.crypto.randomUUID(),
+        ...(opts.threadId ? { threadId: opts.threadId } : {}),
         type,
         issuer: this.me.did,
         recipient: this.vtcDid,
-        issuedAt: new Date().toISOString(),
+        issuedAt: rfc3339(),
         payload,
       } as any,
       this.me.signer,
-    );
+      { proofPurpose: purposeFor(type) }, // authentication, except attestation tasks (SPEC 4.7.3)
+    ) as unknown as Record<string, unknown>;
+  }
+
+  /** POST one already-signed document and classify the reply; throws only when nothing answered. Resending the same document is a SPEC 8.4 retry. */
+  async send(doc: Record<string, unknown>): Promise<Reply> {
+    const type = String(doc.type);
     const startedAt = new Date();
     const t0 = Date.now();
-    const base = { type, issuer: this.me.did, startedAt: startedAt.toISOString(), payload, request: doc };
+    const base = { type, issuer: this.me.did, startedAt: startedAt.toISOString(), payload: (doc.payload ?? {}) as Record<string, unknown>, request: doc };
     let res: Response;
     let text: string;
     try {
@@ -282,30 +371,39 @@ export class VtcClient {
       this.report({ ...base, durationMs: Date.now() - t0, ok: false, code: "network" });
       throw e;
     }
-    const done = { ...base, durationMs: Date.now() - t0, status: res.status };
-    let body: any;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      this.report({ ...done, ok: false, code: "unreadable" });
-      throw new TrustTaskError(res.status, text);
+    const reply = classifyReply(doc as { id?: string; type: string; threadId?: string }, res.status, text);
+    const ok = reply.kind === "response" || reply.kind === "no-response";
+    let replyProof: ReplyProof | undefined;
+    if (reply.document) {
+      try {
+        replyProof = await checkReplyProof(reply.document, this.vtcDid, () => (this.didDoc ??= fetchDidDocument(this.baseUrl, this.fetchImpl).catch((e) => { this.didDoc = undefined; throw e; })));
+      } catch { replyProof = "unchecked"; }
     }
-    if (!res.ok || String(body?.type ?? "").includes("trust-task-error")) {
-      this.report({ ...done, ok: false, code: refusalCode(body) });
-      throw new TrustTaskError(res.status, body);
-    }
-    this.report({ ...done, ok: true });
-    return body.payload as R;
+    this.report({ ...base, durationMs: Date.now() - t0, status: res.status, ok, code: replyCode(reply), kind: reply.kind, ...(reply.threadMismatch ? { threadMismatch: true } : {}), ...(replyProof ? { replyProof } : {}) });
+    return reply;
+  }
+
+  /**
+   * Build, sign and POST one Trust Task document; returns the response payload (`{}` for a 204). Throws
+   * {@link TrustTaskError} for a `trust-task-error` or a reply that is not this task's `#response`, and `TrustTaskPending`
+   * for a `trust-task-next-step` continuation or a 202.
+   */
+  async call<R = any>(type: string, payload: Record<string, unknown> = {}): Promise<R> {
+    return unwrapReply<R>(await this.send(this.build(type, payload)));
   }
 
   // --- applicant side (works before you are a member) ----------------------
 
-  /** The community's join criteria. Public read. Tries manifest 0.4, then 0.3. */
+  /**
+   * The community's join criteria. Public read. Tries manifest 0.4, then 0.3, stepping down ONLY when the VTC refuses
+   * 0.4 with `unsupportedVersion`/`unsupportedType`; when the refusal lists `details.servedVersions`, 0.3 is tried only
+   * if it is listed. Any other refusal (including one whose message mentions a version) is thrown as is.
+   */
   async manifest(): Promise<JoinManifest> {
     try {
       return await this.call<JoinManifest>(VTC_TASK.manifestV04, {});
     } catch (e) {
-      if (e instanceof TrustTaskError && /unsupported|version/i.test(JSON.stringify(e.body))) {
+      if (e instanceof TrustTaskError && versionStepAllowed(e.body, "0.3")) {
         return this.call<JoinManifest>(VTC_TASK.manifestV03, {});
       }
       throw e;
@@ -380,7 +478,7 @@ export class VtcClient {
     try {
       return await this.call<R>(v02, opts);
     } catch (e) {
-      if (e instanceof TrustTaskError && /unsupportedVersion|unsupportedType/.test(JSON.stringify(e.body))) {
+      if (e instanceof TrustTaskError && versionStepAllowed(e.body, "0.1")) {
         return this.call<R>(v01, opts);
       }
       throw e;
@@ -434,11 +532,14 @@ export class VtcClient {
   /**
    * Send the signer's own MembershipCredential back to the community (`vtc/members/vmc/0.1`): built by {@link memberVmc},
    * signed by this client's signer, carried as `{ vc }` (plus `requestId` when given: it must name this member's APPROVED
-   * join request, or the whole delivery is refused). It carries no digest, so the VTC stores it unbound to the grant: the
-   * join status's `credentialsDelivered` turns true while the membership pair stays incomplete. Plain REST, like every call.
+   * join request, or the whole delivery is refused). With `grant` (the community's MembershipCredential from the
+   * `credential-exchange/issue` frame, {@link membershipGrantOf}) it is bound to it, and the VTC stores it bound (the pair is
+   * complete) or refuses a mismatch; a grant that cannot be acknowledged throws {@link MemberVmcNotPossible} before anything is
+   * sent. Without `grant` it carries no digest, so the VTC stores it unbound: the join status's `credentialsDelivered` turns
+   * true while the membership pair stays incomplete. Plain REST, like every call.
    */
-  sendMembershipCredential(opts: { id?: string; validFrom?: Date; requestId?: string } = {}): Promise<MemberVmcReceipt> {
-    const vc = signCredential(memberVmc({ memberDid: this.me.did, communityDid: this.vtcDid, id: opts.id, validFrom: opts.validFrom }), this.me.signer);
+  async sendMembershipCredential(opts: { id?: string; validFrom?: Date; requestId?: string; grant?: Record<string, unknown> } = {}): Promise<MemberVmcReceipt> {
+    const vc = signCredential(memberVmc({ memberDid: this.me.did, communityDid: this.vtcDid, id: opts.id, validFrom: opts.validFrom, grant: opts.grant }), this.me.signer);
     return this.call<MemberVmcReceipt>(VTC_TASK.membersVmc, { vc, ...(opts.requestId ? { requestId: opts.requestId } : {}) });
   }
 

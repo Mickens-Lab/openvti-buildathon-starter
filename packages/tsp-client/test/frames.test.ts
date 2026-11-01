@@ -4,11 +4,12 @@ import { emptyTally, frameOf, ISSUE_TYPE, record } from "../src/index.js";
 
 const json = (o: unknown) => new TextEncoder().encode(JSON.stringify(o));
 
-test("frameOf reads the control type, else the document type, and never the credential", () => {
+test("frameOf reads the control type, else the document type (and passes the document on), and never parses the credential", () => {
   assert.deepEqual(frameOf({ control: { controlType: "invite" } }), { control: "invite" });
-  assert.deepEqual(frameOf({ payload: json({ document: { type: ISSUE_TYPE, payload: { credential: "opaque" } } }) }), { documentType: ISSUE_TYPE });
-  assert.deepEqual(frameOf({ payload: json({ document: {} }) }), { documentType: undefined });
-  assert.deepEqual(frameOf({ payload: json({ document: { type: 7 } }) }), { documentType: undefined });
+  assert.deepEqual(frameOf({ payload: json({ document: { type: ISSUE_TYPE, payload: { credential: "opaque" } } }) }), { documentType: ISSUE_TYPE, document: { type: ISSUE_TYPE, payload: { credential: "opaque" } } });
+  assert.deepEqual(frameOf({ payload: json({ document: {} }) }), { documentType: undefined, document: {} });
+  assert.deepEqual(frameOf({ payload: json({ document: { type: 7 } }) }), { documentType: undefined, document: { type: 7 } });
+  assert.deepEqual(frameOf({ payload: json({ other: 1 }) }), { documentType: undefined });
   const bad = frameOf({ payload: new TextEncoder().encode("not json") });
   assert.ok("unreadable" in bad && /not JSON/.test(bad.unreadable));
 });

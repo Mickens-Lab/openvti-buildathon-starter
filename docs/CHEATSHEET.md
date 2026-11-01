@@ -10,11 +10,11 @@ Trust Task background, finding, using, developing and evaluating tasks: [trust-t
 |---|---|
 | `GET /health` | Liveness |
 | `GET /.well-known/did.jsonl` | The VTA's did:webvh log; last entry's `state.id` is the VTA DID |
-| `POST /trust-tasks` | Every Trust Task. Body: a signed envelope. Header `Authorization: Bearer <token>` after auth |
+| `POST /trust-tasks` | Every Trust Task. Body: a signed Trust Task document. Header `Authorization: Bearer <token>` after auth |
 
 `vta-client` does the DID lookup, signing and bearer handling for you.
 
-## The envelope
+## The document
 
 ```json
 {
@@ -52,7 +52,7 @@ All are prefixed `https://trusttasks.org/spec/`. The VTA serves about 300 more;
 
 ## VTC (community) endpoints
 
-Same envelope, different door and recipient. See [VTC.md](VTC.md) for the full table.
+Same document shape, different door and recipient. See [VTC.md](VTC.md) for the full table.
 
 | | VTA | VTC |
 |---|---|---|
@@ -88,7 +88,7 @@ Tunnel URLs and DIDs die with the run; what each mode gives and every caveat: [M
 | `MODE` | shell, `.env` | `local` (default), `tunnel` (messaging on public quick tunnels, [MODES.md](MODES.md)) or `farm`. Prefer the flag `npm run up -- --tunnel` (this run only; `--local`, `--farm`). The kit writes `MODE` to `.env` only for farm |
 | `FARM` | `.env`, shell | farm mode only: `ic3` (default, preferred, https://vtafarm.ic3.dev) or `firstperson` (agent creation currently broken Farm-side) |
 | `FARM_AGENT` | `.env`, shell | farm mode only: agent name; derives `VTA_URL` (`https://vta-<name>.<farm domain>`) and `VTA_DID` (from its DID log) |
-| `VTC_URL` | `.env`, scripts | VTC base URL, default `http://localhost:8200` in local mode |
+| `VTC_URL` | `.env`, scripts | VTC base URL (the origin, without `/v1`: the client appends it; not the `VTCRest` endpoint from the VTC's DID document, which already ends in `/v1`), default `http://localhost:8200` in local mode |
 | `VTC_DID` | `.env` | VTC DID, when not served at `/.well-known/did.jsonl` |
 | `VTC_REQUEST_ID` | `.env` | Written by `vtc:join`; delete to apply again |
 | `VTC_APPLICANT` | `.env` (you) | Unset = the mode decides: `tunnel` applies, listens and signs the dashboard as a `did:peer:2` naming the mediator, `local`/`farm` as the app `did:key` ([MESSAGING.md](MESSAGING.md#tunnel-mode-delivers-the-credential-to-the-applicant)). `did:key` keeps the did:key in tunnel mode too |
@@ -149,7 +149,7 @@ another allowed origin.
 
 ## Packages (VTC)
 
-`@buildathon/vtc-client`: `VtcClient.connect(url, identity, fetch?, knownDid?)`, `manifest()`, `submitJoin()`, `joinStatus()`, `pickCriterion(manifest)`, admin `listMembers()`, `listJoinRequests()`, `decideJoin()`, and `call()` for any other task. `authenticate()`/`whoami()` are **admin-only** (a plain did:key member is refused by design). A member is **sessionless**: use typed signed requests (`myCard()`, `updateMyCard()`, `directoryEntries()`, `communityProfile()`, `withdrawJoin()`, `renewMembership()`, `leaveCommunity({confirm:true})`, `sendMembershipCredential()` (your own credential back, unbound; turns `credentialsDelivered` true; verified live 2026-10-30 (one machine, one run) from the dashboard), `groups()` ...) and `memberProof()` (member portal `/v1/member/me`) for "am I a member right now". Matrix and limits: [VTC-SURFACE.md](VTC-SURFACE.md), [VTC.md](VTC.md#the-sessionless-member). Local VTC: submit/status/list/decide are verified live (see [VTC.md](VTC.md)).
+`@buildathon/vtc-client`: `VtcClient.connect(url, identity, fetch?, knownDid?)`, `manifest()`, `submitJoin()`, `joinStatus()`, `pickCriterion(manifest)`, admin `listMembers()`, `listJoinRequests()`, `decideJoin()`, and `call()` for any other task. `authenticate()`/`whoami()` are **admin-only** (a plain did:key member is refused by design). A member is **sessionless**: use typed signed requests (`myCard()`, `updateMyCard()`, `directoryEntries()`, `communityProfile()`, `withdrawJoin()`, `renewMembership()`, `leaveCommunity({confirm:true})`, `sendMembershipCredential({ grant? })` (your own credential back; bound to the grant from the issue frame when given (`membershipGrantOf()`), unbound otherwise; turns `credentialsDelivered` true; unbound send verified live 2026-10-30 (one machine, one run) from the dashboard), `groups()` ...) and `memberProof()` (member portal `/v1/member/me`) for "am I a member right now". Matrix and limits: [VTC-SURFACE.md](VTC-SURFACE.md), [VTC.md](VTC.md#the-sessionless-member). Local VTC: submit/status/list/decide are verified live (see [VTC.md](VTC.md)).
 
 **Observing calls.** `client.onCall = (e) => ...` (optional) is told after every call settles: `type`, `issuer`, `startedAt`,
 `durationMs`, `status`, `ok`, `code` (refusal code, or `network`), the signed `payload` and the full signed `request`

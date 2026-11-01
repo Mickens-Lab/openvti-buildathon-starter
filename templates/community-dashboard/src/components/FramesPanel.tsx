@@ -1,5 +1,6 @@
 // "Credential frames": listen on the mediator as this page's applicant and show each TSP frame the VTC pushes (the browser
-// version of `npm run tsp:listen`). Collapsed by default. It reports frame kinds only; it never reads or verifies the credential.
+// version of `npm run tsp:listen`). Collapsed by default. It reports frame kinds; listener.ts keeps the community's membership
+// grant from an issue frame for the membership card's send-back (grant.ts). It never verifies the credential's proof.
 import { useEffect, useRef, useState } from "react";
 import { emptyTally, record, type Frame, type Tally } from "@buildathon/tsp-client";
 import { connectFailureText, frameKind, framesVerdict, NOT_DELIVERED_FLAG, ONE_LISTENER, tallyLine, type FramesGate } from "../frames.ts";

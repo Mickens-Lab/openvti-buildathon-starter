@@ -18,6 +18,8 @@ export interface TraceEvent {
   ok: boolean;
   /** The refusal code, or `network` / `timeout`. */
   code?: string;
+  /** The reply's own proof, when the client checked it: verified, unsigned, wrongSigner, invalid or unchecked. */
+  proof?: string;
   ms: number;
 }
 

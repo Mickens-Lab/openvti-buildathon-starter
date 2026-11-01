@@ -165,4 +165,6 @@ By design, not an omission to patch (source: `acl/storage.rs`, `member_portal/mo
   goes over DIDComm/TSP, which the local stack leaves off (in tunnel mode the applicant is a `did:peer:2` naming the mediator and the VTC pushes the credential to it over TSP: [MESSAGING.md](MESSAGING.md#tunnel-mode-delivers-the-credential-to-the-applicant)). The admin's `decide` response does contain the VMC and role VAC.
   `credentialsDelivered` is not a delivery receipt: the VTC sets it only when it holds the member's own membership credential sent back
   (`vtc/members/vmc/0.1`), so it stays false even when the pushed frames arrived ([MESSAGING.md](MESSAGING.md#what-credentialsdelivered-means)).
-  The dashboard's "Send my membership credential back" sends one (unbound: no digest of the grant), which turns it true.
+  The dashboard's "Send my membership credential back" sends one, which turns it true: bound to the grant (pair complete) when the page
+  received the grant in an issue frame (tunnel mode), unbound (no digest; pair incomplete) otherwise. A member cannot read its own grant
+  over REST: `vtc/members/credentials/0.1` (grant, member credential and `memberVmcBound`) is admin only.

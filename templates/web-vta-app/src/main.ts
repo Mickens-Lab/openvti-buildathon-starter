@@ -1,4 +1,4 @@
-import { VtaClient, decodeCredential, identityFromCredential } from "@buildathon/vta-client";
+import { VtaClient, decodeCredential, identityFromCredential, rfc3339 } from "@buildathon/vta-client";
 import { VtcClient } from "@buildathon/vtc-client";
 import { applicantRule, mountStatusPanel, tunnelBanner } from "@buildathon/status-panel";
 
@@ -88,16 +88,16 @@ function detectWallet() {
   $("wallet-actions").hidden = false;
   $("wallet-profile").onclick = guard(() => w.walletProfile({}));
   $("wallet-sign").onclick = guard(async () => {
-    const issuedAt = new Date().toISOString();
+    const issuedAt = rfc3339();
     // The wallet's holder DID signs; set recipient before signing (audience binding).
-    const envelope = {
+    const doc = {
       id: crypto.randomUUID(),
       type: "https://example.org/spec/buildathon/note/0.1",
       recipient: (await connect().catch(() => undefined))?.vtaDid ?? "did:web:inbox.buildathon.example",
       issuedAt,
       payload: { title: "from the browser", body: "signed by my wallet" },
     };
-    return w.signTrustTask({ envelope });
+    return w.signTrustTask({ envelope: doc }); // the extension's API names the Trust Task document `envelope`
   });
 }
 detectWallet();

@@ -26,12 +26,38 @@ status varies.
 | HTTP 429 | Rate limit. Auth is limited per IP; a signer with no ACL entry shares one per-address budget (burst 10, then one document per about 5 s); a known signer has its own (burst 60, then one per 500 ms) | Back off; cache the bearer token (about 15 min); do not poll in a tight loop |
 | `provision` fails 401 or `permissionDenied` | `.vta/admin.json` is not the key this VTA volume was seeded with | `npm run reset`, then `npm run up` |
 | Success but nothing happened / something unexpected happened | **Empty payload** `{}` is valid for several member tasks and they act: an empty `members/self-remove` removed the member, an empty `join-requests/withdraw` withdrew a request | Read the spec before sending `{}`; wrap destructive calls behind a confirmation |
-| Joined, approved, but no credential arrives | The VMC is pushed over DIDComm/TSP, which the local stack leaves off; `status` returns `credentialsDelivered: false` | Admin `decide` response contains it, or enable messaging |
+| Joined, approved, but no credential arrives | The community pushes its credential over TSP, and `MODE=local` has no mediator; tunnel mode delivers it (`npm run tsp:peer-push`). Separately, `credentialsDelivered` is about the *member's* credential sent back (`vtc/members/vmc/0.1`), so it stays `false` until you send one | Admin `decide` response contains it, or use tunnel mode; see `docs/MESSAGING.md` |
 | Bearer works once then 401 | The session expired (about 15 min) | `authenticate()` again; `whoami` shows `session.expiresAt` |
 | Browser call blocked | CORS: the VTA/VTC allow only configured origins | The templates avoid it: they call `/__vta` through the Vite dev server in every mode, on any port. Calling the VTA directly: loopback ports 3000-3009, 3050, 4000-4009, 4173, 5173-5183, 8000-8009, or set `CORS_ORIGINS_TOML` on first boot |
 
 For your **own consumer**: `suppressed` from `consumeInbound` is silence on purpose (answering would leak an oracle); log
 it. A `rejected` outcome already carries a prepared, addressed error document to send back.
+
+## Interop gotchas
+
+One line each; each one has cost someone a day.
+
+- **`.000Z` timestamps.** The VTA re-serialises `issuedAt` (and `proof.created`) before it checks a proof, so an instant
+  on an exact second written as `...:00.000Z` fails as "signature invalid", rarely and at random. Write `...:00Z`
+  (`rfc3339()` in vta-client); the kit's clients do.
+- **Proof purpose by task.** Ordinary requests are signed for `authentication`; only attestations (e.g.
+  `task-consent/decision`) and credentials use `assertionMethod` (SPEC 4.7.3). The key must be listed under that
+  relationship in the signer's DID document.
+- **Decide by `type`, then `code`.** `#response` is success, `trust-task-error` failure, `trust-task-next-step` "not yet"
+  (4.4.1). Never parse `message`; `idConflict` (a reused document id) is not "already exists".
+- **Never reissue a write blindly.** After a timeout, re-send the same signed document (the consumer absorbs it) or check
+  the state; a new document with a new `id` can execute twice.
+- **Issuer equals sender over messaging.** Over TSP or DIDComm the authenticated sender is the caller and the in-band
+  `issuer` must be the same DID; there is no bearer session to lean on ([01](01-concepts.md#who-is-the-caller-rest-bearer-vs-messaging-sender)).
+- **DIDComm carries the document as the binding envelope's body** (`https://trusttasks.org/binding/didcomm/0.1/envelope`),
+  not as a bespoke message type; the kit has no DIDComm client, but wallets that do follow this.
+- **Refusals over DIDComm can arrive as a problem-report** rather than a `trust-task-error` on older agents; map both.
+- **A restarted VTA forgets the TSP relationship.** Invite again before the next request, or the request goes unanswered.
+- **Replies are not proof-checked by a REST client unless it says so.** Over plain HTTP anything on the path could forge
+  one. The kit's VTA and VTC clients check every reply's proof against the agent's DID document (signer, key listed for
+  the proof's purpose, signature) and report `replyProof` (`verified`, `unsigned`, `wrongSigner`, `invalid`,
+  `unchecked`) on the `onCall` event; `TRACE=1` prints anything but `verified`. They do not refuse yet, so still use
+  HTTPS anywhere but `localhost`.
 
 ## Glossary
 
@@ -41,7 +67,8 @@ it. A `rejected` outcome already carries a prepared, addressed error document to
 | **Trust Task specification / spec** | The definition: slug, version, parties, payload schema, proof requirement, errors. Lives at its Type URI |
 | **Type URI** | The name of a spec at a version, `https://trusttasks.org/spec/<slug>/<MAJOR.MINOR>`. Compared as a whole string. `#response` marks a success reply |
 | **Slug** | The lowercase, hyphenated, optionally hierarchical name of a spec (`acl/grant`) |
-| **Envelope / document** | The outer JSON object: `id`, `type`, `issuer`, `recipient`, `issuedAt`, `payload`, `proof`, ... |
+| **Trust Task document** | The one JSON object: `id`, `type`, `issuer`, `recipient`, `issuedAt`, `payload`, `proof`, ... The framework defines no envelope around it |
+| **Envelope** | Only a transport binding's wrapper around a document, e.g. the TSP binding's `{type: ".../binding/tsp/0.1/envelope", document}` |
 | **Payload** | The task-specific body, validated by the spec's `payload.schema.json` |
 | **Producer / issuer** | The party that sends a document. **Consumer / recipient**: the party that receives and acts |
 | **Request / response / error** | The three reply shapes; told apart by `type` alone. Error type is `trust-task-error` |
@@ -53,7 +80,7 @@ it. A `rejected` outcome already carries a prepared, addressed error document to
 | **Proof** | A W3C Data Integrity proof over the document minus `proof`. Baseline suite `eddsa-jcs-2022` (Ed25519 over RFC 8785 canonical JSON) |
 | **Cryptosuite** | The named signing/canonicalization recipe in a proof |
 | **JCS** | JSON Canonicalization Scheme (RFC 8785): the deterministic serialization that gets signed |
-| **Transport binding** | How documents travel and how transport identity maps to the envelope: HTTPS (this starter), DIDComm, TSP, push |
+| **Transport binding** | How documents travel and how transport identity maps to the document's `issuer`/`recipient`: HTTPS-style REST (VTA/VTC calls here), TSP (the ping and the credential frames here), DIDComm, push |
 | **Discovery** | The `trust-task-discovery` task that lists the Type URIs a party supports |
 | **Draft / candidate / standard / retired / withdrawn** | Spec maturity (`candidate`: two interoperable implementations; `standard`: 90-day stability). All live registry tasks are `draft` or `retired` at the time of writing |
 | **`extends`** | A spec version's promise that it only adds to an earlier version of the same MAJOR, so older consumers can ignore the extras |

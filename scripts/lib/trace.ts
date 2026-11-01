@@ -35,7 +35,7 @@ export function formatTrace(e: TraceEvent): string {
   const task = e.type.startsWith(TT) ? e.type.slice(TT.length) : e.type;
   const outcome = e.ok ? `ok ${e.status ?? ""}`.trim() : `REFUSED ${[e.status, e.code].filter((x) => x !== undefined).join(" ")}`.trim();
   const id = e.id ? `  id ${e.id.replace(/^urn:uuid:/, "").slice(0, 8)}` : "";
-  return `${time}  ${e.source.padEnd(3)} ${e.transport.padEnd(4)} ${task.padEnd(34)} ${outcome.padEnd(18)} ${String(e.ms).padStart(5)} ms  ${shortDid(e.from)} -> ${shortDid(e.to)}${id}`;
+  return `${time}  ${e.source.padEnd(3)} ${e.transport.padEnd(4)} ${task.padEnd(34)} ${outcome.padEnd(18)} ${String(e.ms).padStart(5)} ms  ${shortDid(e.from)} -> ${shortDid(e.to)}${id}${e.proof && e.proof !== "verified" ? `  reply proof ${e.proof}` : ""}`;
 }
 
 /** Keep the last `n` events (all when n <= 0). */

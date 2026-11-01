@@ -106,7 +106,7 @@ is explicitly not a certification of security or fitness. Its proposed tiers, cu
 
 | Tier | Behaviour | Example checks |
 |---|---|---|
-| T0 Discover and parse | Answer discovery; reject malformed envelopes | Reject unknown `type`, expired, future-dated, wrong recipient; return a standard error |
+| T0 Discover and parse | Answer discovery; reject malformed documents | Reject unknown `type`, expired, future-dated, wrong recipient; return a standard error |
 | T1 Signatures | Verify and produce Data Integrity proofs | Accept `eddsa-jcs-2022` and P-256 vectors; unsupported suite is `proofInvalid`; resolve `did:key` then `did:webvh` |
 | T2 Consequential-task safety | The checks owed before acting | No double execution of one `id`; stale-document refusal; consent summary digest matches payload; some items are "self-attested" |
 | T3 Transports | Carry a task over one binding | Separate sub-profiles for HTTPS, DIDComm, TSP, push |

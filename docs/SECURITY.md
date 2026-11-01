@@ -26,6 +26,17 @@ admin private key; the VTC logs an install URL with a token).
 
 Images can be checked: digest against `pins.json`, a GitHub attestation and cosign signature from this repository's workflow, labels, an SBOM, or a local build compared with the published one. What the signature proves and does not (the mediator is open-ACL and these are dev images either way): [VERIFY.md](VERIFY.md). The signing steps are unverified until the workflow has run.
 
+## Whose DID is this? (trust in did.jsonl)
+
+- **Clients trust the transport for the VTA/VTC DID.** `fetchVtaDid` (used by `VtaClient.connect` and `VtcClient.connect`)
+  takes `state.id` from the last line of `/.well-known/did.jsonl` without verifying the log. Whoever answers that URL picks
+  the DID your documents are addressed to. On `localhost` that is your own container. Anywhere else, use HTTPS and pin the
+  DID (`VTA_DID`/`VTC_DID`, i.e. `knownDid`), or resolve it with `verifiedDidWebvh`.
+- **The consent approver verifies the whole log.** `fetchVtaDocument` resolves the VTA's did:webvh log with `didwebvh-ts`:
+  SCID derivation, the entry-hash/versionId chain, and each entry's proof by an authorised update key. Then
+  `verifyConsentRequest` accepts the request's key only if it is listed under `authentication` with the VTA as
+  `controller` (SPEC 4.7.3). Witness proofs and the `did:web` alias are not checked.
+
 ## What not to do
 
 - Do not reuse any key from `.vta/` or `.env`, anywhere, ever.
@@ -54,7 +65,7 @@ ask it to sign, so protect the page against injected code (strict CSP, no third-
 hold the signing key itself, call its signing tasks instead of holding the key in your app (the app's `whoami` lists capabilities such as `sign`, `sign-document` and
 `sign-trust-task`; what each does and how it is scoped is **unverified**). Delete the ACL entry when the app is retired.
 
-*Evidence (design review):* `vault/sign-trust-task` has the VTA sign an envelope as a vault entry's principal DID, so the key stays in the VTA **[V]**. See [ROLES.md](ROLES.md) for contexts and expiry.
+*Evidence (design review):* `vault/sign-trust-task` has the VTA sign a document as a vault entry's principal DID, so the key stays in the VTA **[V]**. See [ROLES.md](ROLES.md) for contexts and expiry.
 
 **L4. A human in the loop.** Passkeys authenticate a human to a service; they are **not** usable to sign Trust Task documents (those need an Ed25519 DID key). Use a
 wallet or browser extension that asks the person to consent before each signature. The VTA serves approval and step-up tasks (`auth/step-up/*` appear in its discovery list)

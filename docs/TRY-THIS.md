@@ -50,9 +50,11 @@ Press **Refresh status** (or wait up to 10 s): the badge becomes **Member**, wit
 Open **Under the hood** to see every signed Trust Task the page made. CLI view of the same state: `npm run vtc:status` (`member yes: role=member ...`) and `npm run vtc:profile`.
 Watch `credentialsDelivered` turn true (any mode; **verified live 2026-10-30 (one machine, one run)**, local and tunnel): on the membership card, "Credential delivery" says the flag is
 false and why. Press **Send my membership credential back**, read the confirm (you sign a credential naming the community as its subject; the
-community stores it; it is unbound to the community's grant, so the membership pair is recorded as incomplete) and press
-**Yes, send my membership credential back**. A toast says `The community answered "stored" for your membership credential.`, a **Receipt**
-block shows the community's answer, and the row turns to **reciprocal credential held**. In local mode (and with `VTC_APPLICANT=did:key`)
+community stores it). In local mode it is unbound to the community's grant (the page never receives the grant without messaging), so
+the membership pair is recorded as incomplete; in tunnel mode, if "Credential frames" was listening when the administrator approved,
+the card says the grant arrived and the credential is bound to it (pair complete). Press **Yes, send my membership credential back**.
+A toast says `The community answered "stored" for your unbound membership credential.` (or `bound`), a **Receipt** block shows the
+community's answer, and the row turns to **reciprocal credential held** (or **bound credential held**). In local mode (and with `VTC_APPLICANT=did:key`)
 `npm run vtc:status` then prints `credentialsDelivered=true`; in tunnel mode the page is the `did:peer:2`, which `vtc:status` (the `did:key`) is not.
 To start over: `npm run vtc:leave -- --yes`. If it fails: "Problem" with a network code means the VTC is not up (`WITH_VTC=1 npm run up`, then `npm run vtc:hello`).
 
