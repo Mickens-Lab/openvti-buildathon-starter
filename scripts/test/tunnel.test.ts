@@ -48,7 +48,7 @@ test("profiles: tunnel always adds messaging and vtc; local adds vtc only on req
 });
 
 test("volumes are matched by compose project name", () => {
-  assert.equal(composeProject("/x/Vta-Buildathon-Starter", ""), "vta-buildathon-starter");
+  assert.equal(composeProject("/x/Openvti-Buildathon-Starter", ""), "openvti-buildathon-starter");
   assert.equal(composeProject("/x/y", "custom"), "custom");
   const all = ["p_vta-data", "p_mediator-data", "other_vta-data", "p_unrelated"];
   assert.deepEqual(existingVolumes(all, "p"), ["vta-data", "mediator-data"]);
