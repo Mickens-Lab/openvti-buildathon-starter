@@ -1,4 +1,4 @@
-# VTA buildathon starter
+# OpenVTI buildathon starter
 
 > **WARNING: a playground for demos and testing ONLY.** Keys are held in plaintext files
 > (`.vta/`, `.env`, the VTA's seed on its volume) and, for the web templates, embedded in the
